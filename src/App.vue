@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { computed } from 'vue';
+  import { computed, ref } from 'vue';
   import { useTheme } from 'vuetify';
   import { useLocalStorage } from '@vueuse/core';
   import { useSpriteStore } from '@/stores/spriteStore';
@@ -7,13 +7,19 @@
   import SpriteCanvas from '@/components/SpriteCanvas.vue';
   import GridSettings from '@/components/GridSettings.vue';
   import ExportPanel from '@/components/ExportPanel.vue';
+  import SpriteNamesPanel from '@/components/SpriteNamesPanel.vue';
 
   const store = useSpriteStore();
   const theme = useTheme();
   const isDark = computed(() => theme.current.value.dark);
 
-  const savedTheme = useLocalStorage<'light' | 'dark'>('sprite-cutter-theme', 'dark');
+  const savedTheme = useLocalStorage<'light' | 'dark'>(
+    'sprite-cutter-theme',
+    'dark'
+  );
   theme.global.name.value = savedTheme.value;
+
+  const openPanels = ref(['grid', 'export']);
 
   function toggleTheme() {
     savedTheme.value = isDark.value ? 'light' : 'dark';
@@ -67,30 +73,53 @@
       color="surface"
       style="overflow-y: auto"
     >
-      <VListItem
-        title="Сетка"
-        prependIcon="mdi-grid"
-        density="compact"
-        class="text-medium-emphasis pl-4"
-        style="min-height: 44px"
-      />
-      <VDivider />
-      <div class="px-4 py-4">
-        <GridSettings />
-      </div>
+      <VExpansionPanels
+        v-model="openPanels"
+        variant="accordion"
+        multiple
+      >
+        <VExpansionPanel value="grid">
+          <VExpansionPanelTitle>
+            <VIcon
+              size="18"
+              class="mr-2"
+              >mdi-grid</VIcon
+            >
+            Сетка
+          </VExpansionPanelTitle>
+          <VExpansionPanelText>
+            <GridSettings />
+          </VExpansionPanelText>
+        </VExpansionPanel>
 
-      <VDivider />
-      <VListItem
-        title="Экспорт"
-        prependIcon="mdi-export-variant"
-        density="compact"
-        class="text-medium-emphasis pl-4"
-        style="min-height: 44px"
-      />
-      <VDivider />
-      <div class="px-4 py-4">
-        <ExportPanel />
-      </div>
+        <VExpansionPanel value="names">
+          <VExpansionPanelTitle>
+            <VIcon
+              size="18"
+              class="mr-2"
+              >mdi-tag-text-outline</VIcon
+            >
+            Имена спрайтов
+          </VExpansionPanelTitle>
+          <VExpansionPanelText>
+            <SpriteNamesPanel />
+          </VExpansionPanelText>
+        </VExpansionPanel>
+
+        <VExpansionPanel value="export">
+          <VExpansionPanelTitle>
+            <VIcon
+              size="18"
+              class="mr-2"
+              >mdi-export-variant</VIcon
+            >
+            Экспорт
+          </VExpansionPanelTitle>
+          <VExpansionPanelText>
+            <ExportPanel />
+          </VExpansionPanelText>
+        </VExpansionPanel>
+      </VExpansionPanels>
     </VNavigationDrawer>
 
     <VMain>
@@ -108,12 +137,15 @@
         class="fill-viewport d-flex flex-column pa-3"
         style="gap: 6px"
       >
-        <SpriteCanvas />
-        <p class="text-caption text-disabled text-center shrink-0">
-          Колёсико — zoom · Space + ЛКМ — перемещение · клик — выделить
-          <template v-if="store.showOffsets">
-            · тяни точку — сдвинуть центр ячейки
-          </template>
+        <div class="canvas-row">
+          <SpriteCanvas />
+        </div>
+        <p
+          class="text-caption text-disabled text-center"
+          style="flex-shrink: 0"
+        >
+          Колёсико — zoom · СКМ/Пробел — перемещение · клик/тяни — выделение
+          <template v-if="store.showOffsets"> · тяни бокс — сдвинуть</template>
         </p>
       </div>
     </VMain>
@@ -124,5 +156,11 @@
   .fill-viewport {
     height: 100%;
     box-sizing: border-box;
+  }
+  .canvas-row {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    gap: 12px;
   }
 </style>

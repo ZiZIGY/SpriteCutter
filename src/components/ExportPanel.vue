@@ -1,184 +1,19 @@
 <script setup lang="ts">
-  import { ref, computed } from 'vue';
   import { useSpriteStore } from '@/stores/spriteStore';
+  import { useExport } from '@/composables/useExport';
 
   const store = useSpriteStore();
-  const loading = ref<'single' | 'sheet' | 'full' | 'json' | 'jsonAll' | null>(null);
-
-  const exportAll = ref(false);
-
-  const cellsToExport = computed(() => {
-    if (exportAll.value) return store.activeCells;
-    return store.activeCells.filter((cell) =>
-      store.selectedCells.has(`${cell.col}_${cell.row}`)
-    );
-  });
-
-  const exportCount = computed(() => cellsToExport.value.length);
-
-  async function loadImg(): Promise<HTMLImageElement> {
-    const img = new Image();
-    await new Promise<void>((resolve) => {
-      img.onload = () => resolve();
-      img.src = store.imageSrc;
-    });
-    return img;
-  }
-
-  function downloadCanvas(canvas: HTMLCanvasElement, name: string) {
-    const anchor = document.createElement('a');
-    anchor.href = canvas.toDataURL(`image/${store.exportFormat}`);
-    anchor.download = `${name}.${store.exportFormat}`;
-    anchor.click();
-  }
-
-  function downloadJSON(data: unknown, name: string) {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const anchor = document.createElement('a');
-    anchor.href = URL.createObjectURL(blob);
-    anchor.download = `${name}.json`;
-    anchor.click();
-    URL.revokeObjectURL(anchor.href);
-  }
-
-  async function exportSingle() {
-    loading.value = 'single';
-    const img = await loadImg();
-    const cells = cellsToExport.value;
-    for (const cell of cells) {
-      const offset = store.getCellOffset(cell.col, cell.row);
-      const canvas = document.createElement('canvas');
-      canvas.width = cell.width;
-      canvas.height = cell.height;
-      canvas.getContext('2d')!.drawImage(
-        img,
-        cell.x + offset.x, cell.y + offset.y, cell.width, cell.height,
-        0, 0, cell.width, cell.height
-      );
-      downloadCanvas(
-        canvas,
-        `sprite_${String(cell.row).padStart(2, '0')}_${String(cell.col).padStart(2, '0')}`
-      );
-      await new Promise((resolve) => setTimeout(resolve, 60));
-    }
-    loading.value = null;
-  }
-
-  async function exportSheet() {
-    loading.value = 'sheet';
-    const cells = cellsToExport.value;
-    if (!cells.length) { loading.value = null; return; }
-
-    const gap = store.exportGap;
-    const img = await loadImg();
-    const maxCol = Math.max(...cells.map((cell) => cell.col));
-    const maxRow = Math.max(...cells.map((cell) => cell.row));
-    const cellWidth = Math.max(...cells.map((cell) => cell.width));
-    const cellHeight = Math.max(...cells.map((cell) => cell.height));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = (maxCol + 1) * cellWidth + maxCol * gap;
-    canvas.height = (maxRow + 1) * cellHeight + maxRow * gap;
-
-    const ctx = canvas.getContext('2d')!;
-    for (const cell of cells) {
-      const offset = store.getCellOffset(cell.col, cell.row);
-      ctx.drawImage(
-        img,
-        cell.x + offset.x, cell.y + offset.y, cell.width, cell.height,
-        cell.col * (cellWidth + gap), cell.row * (cellHeight + gap), cell.width, cell.height
-      );
-    }
-    downloadCanvas(canvas, 'spritesheet');
-    loading.value = null;
-  }
-
-  async function exportFullSheet() {
-    loading.value = 'full';
-    const cells = store.activeCells;
-    if (!cells.length) { loading.value = null; return; }
-
-    const gap = store.exportGap;
-    const img = await loadImg();
-    const maxCol = Math.max(...cells.map((cell) => cell.col));
-    const maxRow = Math.max(...cells.map((cell) => cell.row));
-    const cellWidth = Math.max(...cells.map((cell) => cell.width));
-    const cellHeight = Math.max(...cells.map((cell) => cell.height));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = (maxCol + 1) * cellWidth + maxCol * gap;
-    canvas.height = (maxRow + 1) * cellHeight + maxRow * gap;
-
-    const ctx = canvas.getContext('2d')!;
-    for (const cell of cells) {
-      const offset = store.getCellOffset(cell.col, cell.row);
-      ctx.drawImage(
-        img,
-        cell.x + offset.x, cell.y + offset.y, cell.width, cell.height,
-        cell.col * (cellWidth + gap), cell.row * (cellHeight + gap), cell.width, cell.height
-      );
-    }
-    downloadCanvas(canvas, 'spritesheet_full');
-    loading.value = null;
-  }
-
-  // Экспорт JSON в формате TexturePacker Hash (совместим с Phaser, PixiJS, Unity)
-  function buildAtlas(cells: typeof store.activeCells) {
-    const imageName = store.imageFile?.name ?? 'spritesheet.png'
-    const gap = store.exportGap
-    const maxCol = Math.max(...cells.map((c) => c.col))
-    const maxRow = Math.max(...cells.map((c) => c.row))
-    const cellW = Math.max(...cells.map((c) => c.width))
-    const cellH = Math.max(...cells.map((c) => c.height))
-
-    const frames: Record<string, object> = {}
-    for (const cell of cells) {
-      const offset = store.getCellOffset(cell.col, cell.row);
-      const key = `sprite_${String(cell.row).padStart(2, '0')}_${String(cell.col).padStart(2, '0')}`
-      frames[key] = {
-        frame: { x: cell.col * (cellW + gap), y: cell.row * (cellH + gap), w: cell.width, h: cell.height },
-        sourceFrame: { x: cell.x + offset.x, y: cell.y + offset.y, w: cell.width, h: cell.height },
-        rotated: false,
-        trimmed: false,
-        spriteSourceSize: { x: 0, y: 0, w: cell.width, h: cell.height },
-        sourceSize: { w: cell.width, h: cell.height },
-        pivot: { x: -offset.x / cell.width, y: -offset.y / cell.height },
-        col: cell.col,
-        row: cell.row,
-      }
-    }
-
-    return {
-      frames,
-      meta: {
-        app: 'SpriteCutter',
-        image: imageName,
-        sourceImage: { w: store.imageWidth, h: store.imageHeight },
-        size: { w: (maxCol + 1) * cellW + maxCol * gap, h: (maxRow + 1) * cellH + maxRow * gap },
-        scale: 1,
-        format: store.exportFormat.toUpperCase(),
-        grid: { cellWidth: cellW, cellHeight: cellH, gap },
-      },
-    }
-  }
-
-  function exportJSON() {
-    loading.value = 'json';
-    const cells = cellsToExport.value;
-    if (!cells.length) { loading.value = null; return; }
-    const baseName = (store.imageFile?.name ?? 'spritesheet').replace(/\.[^.]+$/, '');
-    downloadJSON(buildAtlas(cells), `${baseName}_atlas`);
-    loading.value = null;
-  }
-
-  function exportJSONAll() {
-    loading.value = 'jsonAll';
-    const cells = store.activeCells;
-    if (!cells.length) { loading.value = null; return; }
-    const baseName = (store.imageFile?.name ?? 'spritesheet').replace(/\.[^.]+$/, '');
-    downloadJSON(buildAtlas(cells), `${baseName}_atlas_full`);
-    loading.value = null;
-  }
+  const {
+    loading,
+    exportAll,
+    exportCount,
+    availableCount,
+    exportSingle,
+    exportSheet,
+    exportFullSheet,
+    exportJSON,
+    exportJSONAll,
+  } = useExport();
 </script>
 
 <template>
@@ -217,14 +52,22 @@
 
   <p class="text-caption text-disabled mb-3">
     {{ exportAll ? 'Все' : 'Выбранные' }}: {{ exportCount }} из
-    {{ store.activeCells.length }}
+    {{ availableCount }}
   </p>
 
   <template v-if="!exportAll">
     <p class="text-overline text-medium-emphasis mb-1">Выделение</p>
     <div class="two-col mb-4">
-      <VBtn size="small" variant="tonal" @click="store.selectAll()">
-        <VIcon start size="15">mdi-checkbox-multiple-marked-outline</VIcon>
+      <VBtn
+        size="small"
+        variant="tonal"
+        @click="store.selectAll()"
+      >
+        <VIcon
+          start
+          size="15"
+          >mdi-checkbox-multiple-marked-outline</VIcon
+        >
         Все
       </VBtn>
       <VBtn
@@ -233,7 +76,11 @@
         :disabled="store.selectedCells.size === 0"
         @click="store.deselectAll()"
       >
-        <VIcon start size="15">mdi-checkbox-multiple-blank-outline</VIcon>
+        <VIcon
+          start
+          size="15"
+          >mdi-checkbox-multiple-blank-outline</VIcon
+        >
         Сброс
       </VBtn>
     </div>
@@ -305,7 +152,7 @@
       :loading="loading === 'jsonAll'"
       @click="exportJSONAll"
     >
-      JSON весь лист ({{ store.activeCells.length }})
+      JSON весь лист ({{ availableCount }})
     </VBtn>
   </div>
 
@@ -321,7 +168,11 @@
 
   <VDivider class="my-3" />
   <p class="text-caption text-medium-emphasis">
-    <VIcon size="13" class="mr-1">mdi-information-outline</VIcon>
+    <VIcon
+      size="13"
+      class="mr-1"
+      >mdi-information-outline</VIcon
+    >
     Линии сетки не попадают в экспорт — только пиксели оригинала
   </p>
 </template>

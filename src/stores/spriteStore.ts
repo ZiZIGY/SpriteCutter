@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue';
+
 import { defineStore } from 'pinia';
 
 export interface CellOffset {
@@ -14,6 +15,8 @@ export interface SpriteCell {
   width: number;
   height: number;
   selected: boolean;
+  excluded: boolean;
+  name: string;
 }
 
 export const useSpriteStore = defineStore('sprite', () => {
@@ -33,6 +36,13 @@ export const useSpriteStore = defineStore('sprite', () => {
   const gridColor = ref('#FFFFFF');
   const showOffsets = ref(false);
   const cellOffsets = ref<Record<string, CellOffset>>({});
+
+  const excludeMode = ref(false);
+  const excludedCells = ref<Set<string>>(new Set());
+
+  const cellNames = ref<Record<string, string>>({});
+  const showNames = ref(false);
+  const focusedCell = ref<string | null>(null);
 
   const exportGap = ref(2);
   const exportFormat = ref<'png' | 'webp'>('png');
@@ -72,10 +82,15 @@ export const useSpriteStore = defineStore('sprite', () => {
       while (x + cellWidth.value <= imageWidth.value) {
         const key = `${col}_${row}`;
         cells.push({
-          col, row, x, y,
+          col,
+          row,
+          x,
+          y,
           width: cellWidth.value,
           height: cellHeight.value,
           selected: selectedCells.value.has(key),
+          excluded: excludedCells.value.has(key),
+          name: cellNames.value[key] ?? '',
         });
         x += cellWidth.value + gapX.value;
         col++;
@@ -88,16 +103,44 @@ export const useSpriteStore = defineStore('sprite', () => {
 
   function toggleCell(col: number, row: number) {
     const key = `${col}_${row}`;
+    if (excludedCells.value.has(key)) return;
     if (selectedCells.value.has(key)) selectedCells.value.delete(key);
     else selectedCells.value.add(key);
   }
 
   function selectAll() {
-    activeCells.value.forEach((cell) => selectedCells.value.add(`${cell.col}_${cell.row}`));
+    activeCells.value.forEach((cell) => {
+      if (!cell.excluded) selectedCells.value.add(`${cell.col}_${cell.row}`);
+    });
   }
 
   function deselectAll() {
     selectedCells.value.clear();
+  }
+
+  function toggleExcluded(col: number, row: number) {
+    const key = `${col}_${row}`;
+    if (excludedCells.value.has(key)) {
+      excludedCells.value.delete(key);
+    } else {
+      excludedCells.value.add(key);
+      selectedCells.value.delete(key);
+    }
+  }
+
+  function resetExcludedCells() {
+    excludedCells.value = new Set();
+  }
+
+  function setCellName(col: number, row: number, name: string) {
+    const key = `${col}_${row}`;
+    const trimmed = name.trim();
+    if (trimmed) cellNames.value[key] = trimmed;
+    else delete cellNames.value[key];
+  }
+
+  function resetCellNames() {
+    cellNames.value = {};
   }
 
   function getCellOffset(col: number, row: number): CellOffset {
@@ -118,18 +161,46 @@ export const useSpriteStore = defineStore('sprite', () => {
     imageWidth.value = 0;
     imageHeight.value = 0;
     selectedCells.value.clear();
+    excludedCells.value = new Set();
     cellOffsets.value = {};
+    cellNames.value = {};
   }
 
   return {
-    imageFile, imageSrc, imageWidth, imageHeight, isApplying,
-    cellWidth, cellHeight, offsetX, offsetY, gapX, gapY,
-    gridColor, showOffsets, cellOffsets,
-    exportGap, exportFormat, selectedCells,
+    imageFile,
+    imageSrc,
+    imageWidth,
+    imageHeight,
+    isApplying,
+    cellWidth,
+    cellHeight,
+    offsetX,
+    offsetY,
+    gapX,
+    gapY,
+    gridColor,
+    showOffsets,
+    cellOffsets,
+    excludeMode,
+    excludedCells,
+    cellNames,
+    showNames,
+    focusedCell,
+    exportGap,
+    exportFormat,
+    selectedCells,
     activeCells,
     loadImage,
-    toggleCell, selectAll, deselectAll,
-    getCellOffset, setCellOffset, resetCellOffsets,
+    toggleCell,
+    selectAll,
+    deselectAll,
+    toggleExcluded,
+    resetExcludedCells,
+    setCellName,
+    resetCellNames,
+    getCellOffset,
+    setCellOffset,
+    resetCellOffsets,
     reset,
   };
 });
