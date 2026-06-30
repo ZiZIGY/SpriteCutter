@@ -6,7 +6,7 @@ import vue from '@vitejs/plugin-vue';
 
 export default defineConfig({
   plugins: [vue(), tailwindcss()],
-  base: '/GLSLAudioVisualizer/',
+  base: '/SpriteCutter/',
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
