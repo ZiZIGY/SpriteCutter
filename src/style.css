@@ -1,0 +1,14 @@
+@import 'tailwindcss/theme';
+@import 'tailwindcss/utilities';
+@import '@mdi/font/css/materialdesignicons.css';
+
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
