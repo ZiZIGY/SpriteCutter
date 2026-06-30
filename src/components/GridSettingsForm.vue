@@ -19,64 +19,68 @@
   let syncLock = false;
   watch(
     () => pending.value.cellWidth,
-    (v) => {
-      if (syncLock || !v || !store.imageWidth) return;
+    (value) => {
+      if (syncLock || !value || !store.imageWidth) return;
       syncLock = true;
-      pending.value.cols = Math.floor(store.imageWidth / v);
+      pending.value.cols = Math.floor(store.imageWidth / value);
       syncLock = false;
     }
   );
   watch(
     () => pending.value.cellHeight,
-    (v) => {
-      if (syncLock || !v || !store.imageHeight) return;
+    (value) => {
+      if (syncLock || !value || !store.imageHeight) return;
       syncLock = true;
-      pending.value.rows = Math.floor(store.imageHeight / v);
+      pending.value.rows = Math.floor(store.imageHeight / value);
       syncLock = false;
     }
   );
   watch(
     () => pending.value.cols,
-    (v) => {
-      if (syncLock || !v || !store.imageWidth) return;
+    (value) => {
+      if (syncLock || !value || !store.imageWidth) return;
       syncLock = true;
-      pending.value.cellWidth = Math.floor(store.imageWidth / v);
+      pending.value.cellWidth = Math.floor(store.imageWidth / value);
       syncLock = false;
     }
   );
   watch(
     () => pending.value.rows,
-    (v) => {
-      if (syncLock || !v || !store.imageHeight) return;
+    (value) => {
+      if (syncLock || !value || !store.imageHeight) return;
       syncLock = true;
-      pending.value.cellHeight = Math.floor(store.imageHeight / v);
+      pending.value.cellHeight = Math.floor(store.imageHeight / value);
       syncLock = false;
     }
   );
 
   const rules = {
     cellW: [
-      (v: number) => v >= 1 || 'Минимум 1',
-      (v: number) => v <= store.imageWidth || `Макс. ${store.imageWidth}`,
+      (value: number) => value >= 1 || 'Минимум 1',
+      (value: number) =>
+        value <= store.imageWidth || `Макс. ${store.imageWidth}`,
     ],
     cellH: [
-      (v: number) => v >= 1 || 'Минимум 1',
-      (v: number) => v <= store.imageHeight || `Макс. ${store.imageHeight}`,
+      (value: number) => value >= 1 || 'Минимум 1',
+      (value: number) =>
+        value <= store.imageHeight || `Макс. ${store.imageHeight}`,
     ],
-    offset: [(v: number) => v >= 0 || 'Минимум 0'],
-    gap: [(v: number) => v >= 0 || 'Минимум 0'],
+    offset: [(value: number) => value >= 0 || 'Минимум 0'],
+    gap: [(value: number) => value >= 0 || 'Минимум 0'],
     cols: [
-      (v: number) => v >= 1 || 'Минимум 1',
-      (v: number) => v <= store.imageWidth || `Макс. ${store.imageWidth}`,
+      (value: number) => value >= 1 || 'Минимум 1',
+      (value: number) =>
+        value <= store.imageWidth || `Макс. ${store.imageWidth}`,
     ],
     rows: [
-      (v: number) => v >= 1 || 'Минимум 1',
-      (v: number) => v <= store.imageHeight || `Макс. ${store.imageHeight}`,
+      (value: number) => value >= 1 || 'Минимум 1',
+      (value: number) =>
+        value <= store.imageHeight || `Макс. ${store.imageHeight}`,
     ],
   };
 
   const waitFrame = () =>
-    new Promise<void>((r) => requestAnimationFrame(() => r()));
+    new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
   async function apply() {
     const { valid } = await formRef.value!.validate();

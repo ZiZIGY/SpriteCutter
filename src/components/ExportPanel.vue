@@ -46,12 +46,13 @@
     const img = await loadImg();
     const cells = cellsToExport.value;
     for (const cell of cells) {
+      const offset = store.getCellOffset(cell.col, cell.row);
       const canvas = document.createElement('canvas');
       canvas.width = cell.width;
       canvas.height = cell.height;
       canvas.getContext('2d')!.drawImage(
         img,
-        cell.x, cell.y, cell.width, cell.height,
+        cell.x + offset.x, cell.y + offset.y, cell.width, cell.height,
         0, 0, cell.width, cell.height
       );
       downloadCanvas(
@@ -81,9 +82,10 @@
 
     const ctx = canvas.getContext('2d')!;
     for (const cell of cells) {
+      const offset = store.getCellOffset(cell.col, cell.row);
       ctx.drawImage(
         img,
-        cell.x, cell.y, cell.width, cell.height,
+        cell.x + offset.x, cell.y + offset.y, cell.width, cell.height,
         cell.col * (cellWidth + gap), cell.row * (cellHeight + gap), cell.width, cell.height
       );
     }
@@ -109,9 +111,10 @@
 
     const ctx = canvas.getContext('2d')!;
     for (const cell of cells) {
+      const offset = store.getCellOffset(cell.col, cell.row);
       ctx.drawImage(
         img,
-        cell.x, cell.y, cell.width, cell.height,
+        cell.x + offset.x, cell.y + offset.y, cell.width, cell.height,
         cell.col * (cellWidth + gap), cell.row * (cellHeight + gap), cell.width, cell.height
       );
     }
@@ -130,14 +133,16 @@
 
     const frames: Record<string, object> = {}
     for (const cell of cells) {
+      const offset = store.getCellOffset(cell.col, cell.row);
       const key = `sprite_${String(cell.row).padStart(2, '0')}_${String(cell.col).padStart(2, '0')}`
       frames[key] = {
         frame: { x: cell.col * (cellW + gap), y: cell.row * (cellH + gap), w: cell.width, h: cell.height },
-        sourceFrame: { x: cell.x, y: cell.y, w: cell.width, h: cell.height },
+        sourceFrame: { x: cell.x + offset.x, y: cell.y + offset.y, w: cell.width, h: cell.height },
         rotated: false,
         trimmed: false,
         spriteSourceSize: { x: 0, y: 0, w: cell.width, h: cell.height },
         sourceSize: { w: cell.width, h: cell.height },
+        pivot: { x: -offset.x / cell.width, y: -offset.y / cell.height },
         col: cell.col,
         row: cell.row,
       }
