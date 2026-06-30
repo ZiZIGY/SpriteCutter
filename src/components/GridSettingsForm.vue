@@ -1,10 +1,30 @@
 <script setup lang="ts">
   import { ref, watch, useTemplateRef } from 'vue';
   import { useSpriteStore } from '@/stores/spriteStore';
+  import { autoDetect, sampleBgHex } from '@/composables/useAutoDetect';
 
   const store = useSpriteStore();
   const formRef = useTemplateRef('formRef');
 
+  // ── auto-detect settings ────────────────────────────────────────────────────
+  const bgColor = ref('#000000');
+  const bgTolerance = ref(30);
+  const bgPickerOpen = ref(false);
+
+  watch(
+    () => store.imageSrc,
+    async (src) => {
+      if (!src) return;
+      try {
+        bgColor.value = await sampleBgHex(src, store.imageWidth, store.imageHeight);
+      } catch {
+        // keep default
+      }
+    },
+    { immediate: true }
+  );
+
+  // ── grid form state ─────────────────────────────────────────────────────────
   const pending = ref({
     cellWidth: store.cellWidth,
     cellHeight: store.cellHeight,
@@ -82,6 +102,46 @@
   const waitFrame = () =>
     new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
+  const detecting = ref(false);
+  const detectFailed = ref(false);
+
+  async function detect() {
+    if (!store.imageSrc) return;
+    detecting.value = true;
+    detectFailed.value = false;
+    try {
+      const result = await autoDetect(
+        store.imageSrc,
+        store.imageWidth,
+        store.imageHeight,
+        bgColor.value,
+        bgTolerance.value,
+      );
+      if (!result) {
+        detectFailed.value = true;
+        return;
+      }
+      syncLock = true;
+      pending.value.cellWidth = result.cellWidth;
+      pending.value.cellHeight = result.cellHeight;
+      pending.value.offsetX = result.offsetX;
+      pending.value.offsetY = result.offsetY;
+      pending.value.gapX = result.gapX;
+      pending.value.gapY = result.gapY;
+      pending.value.cols = result.cols;
+      pending.value.rows = result.rows;
+      syncLock = false;
+      await apply();
+      store.resetCellOffsets();
+      for (const [key, offset] of Object.entries(result.cellOffsets)) {
+        const [col, row] = key.split('_').map(Number);
+        store.setCellOffset(col, row, offset);
+      }
+    } finally {
+      detecting.value = false;
+    }
+  }
+
   async function apply() {
     const { valid } = await formRef.value!.validate();
     if (!valid) return;
@@ -107,6 +167,115 @@
     ref="formRef"
     @submit.prevent="apply"
   >
+    <!-- ── auto-detect section ────────────────────────────────────────── -->
+    <p class="text-overline text-medium-emphasis mb-2">Автоопределение</p>
+
+    <div class="two-col mb-2">
+      <!-- Background color picker -->
+      <div>
+        <p class="field-label">Цвет фона</p>
+        <VMenu
+          v-model="bgPickerOpen"
+          :close-on-content-click="false"
+          location="right"
+        >
+          <template #activator="{ props: mp }">
+            <VBtn
+              variant="outlined"
+              size="small"
+              block
+              v-bind="mp"
+              class="justify-start"
+              style="text-transform: none; font-family: monospace; font-size: 11px"
+            >
+              <span
+                class="color-swatch mr-2"
+                :style="{ background: bgColor }"
+              />
+              {{ bgColor.toUpperCase() }}
+              <VIcon
+                end
+                size="14"
+              >mdi-menu-down</VIcon>
+            </VBtn>
+          </template>
+          <VCard
+            rounded="lg"
+            elevation="8"
+            style="overflow: hidden"
+          >
+            <VColorPicker
+              :model-value="bgColor"
+              mode="hex"
+              :modes="['hex']"
+              hide-canvas
+              hide-inputs
+              show-swatches
+              :swatches="[
+                ['#000000', '#0a0a0a', '#111111', '#1a1a1a'],
+                ['#FFFFFF', '#f0f0f0', '#cccccc', '#999999'],
+                ['#ff00ff', '#00ff00', '#0000ff', '#ff0000'],
+              ]"
+              @update:modelValue="(v: string) => (bgColor = v.slice(0, 7))"
+            />
+            <VCardActions class="pt-0">
+              <VSpacer />
+              <VBtn
+                size="x-small"
+                variant="tonal"
+                @click="bgPickerOpen = false"
+              >
+                Готово
+              </VBtn>
+            </VCardActions>
+          </VCard>
+        </VMenu>
+      </div>
+
+      <!-- Tolerance -->
+      <div>
+        <p class="field-label">Допуск</p>
+        <VNumberInput
+          v-model="bgTolerance"
+          controlVariant="stacked"
+          density="compact"
+          variant="outlined"
+          hideDetails
+          :min="1"
+          :max="200"
+        />
+      </div>
+    </div>
+
+    <VBtn
+      variant="tonal"
+      color="secondary"
+      block
+      size="small"
+      class="mb-3"
+      :loading="detecting"
+      prependIcon="mdi-auto-fix"
+      @click="detect"
+    >
+      Найти спрайты
+    </VBtn>
+
+    <VAlert
+      v-if="detectFailed"
+      type="warning"
+      variant="tonal"
+      density="compact"
+      rounded="lg"
+      class="mb-3 text-caption"
+      closable
+      @click:close="detectFailed = false"
+    >
+      Не удалось найти спрайты — скорректируй цвет фона или допуск
+    </VAlert>
+
+    <VDivider class="mb-3" />
+
+    <!-- ── manual grid params ────────────────────────────────────────── -->
     <p class="text-overline text-medium-emphasis mb-1">Размер ячейки</p>
     <div class="two-col mb-3">
       <VNumberInput
@@ -221,7 +390,14 @@
     color: rgba(255, 255, 255, 0.45);
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    margin-bottom: 6px;
-    margin-top: 0;
+    margin-bottom: 4px;
+  }
+  .color-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    flex-shrink: 0;
+    display: inline-block;
   }
 </style>
