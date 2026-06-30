@@ -1,9 +1,9 @@
 <script setup lang="ts">
-  import { ref, watch } from 'vue';
+  import { ref, watch, useTemplateRef } from 'vue';
   import { useSpriteStore } from '@/stores/spriteStore';
 
   const store = useSpriteStore();
-  const formRef = ref();
+  const formRef = useTemplateRef('formRef');
 
   const pending = ref({
     cellWidth: store.cellWidth,
@@ -79,7 +79,7 @@
     new Promise<void>((r) => requestAnimationFrame(() => r()));
 
   async function apply() {
-    const { valid } = await formRef.value.validate();
+    const { valid } = await formRef.value!.validate();
     if (!valid) return;
 
     store.isApplying = true;
@@ -103,7 +103,7 @@
     ref="formRef"
     @submit.prevent="apply"
   >
-    <p class="field-label">Размер ячейки</p>
+    <p class="text-overline text-medium-emphasis mb-1">Размер ячейки</p>
     <div class="two-col mb-3">
       <VNumberInput
         v-model="pending.cellWidth"
@@ -125,7 +125,7 @@
       />
     </div>
 
-    <p class="field-label">Отступ от края</p>
+    <p class="text-overline text-medium-emphasis mb-1">Отступ от края</p>
     <div class="two-col mb-3">
       <VNumberInput
         v-model="pending.offsetX"
@@ -147,7 +147,7 @@
       />
     </div>
 
-    <p class="field-label">Зазор между ячейками</p>
+    <p class="text-overline text-medium-emphasis mb-1">Зазор между ячейками</p>
     <div class="two-col mb-4">
       <VNumberInput
         v-model="pending.gapX"
@@ -171,7 +171,7 @@
 
     <VDivider class="mb-3" />
 
-    <p class="field-label">По числу ячеек</p>
+    <p class="text-overline text-medium-emphasis mb-1">По числу ячеек</p>
     <div class="two-col mb-4">
       <VNumberInput
         v-model="pending.cols"

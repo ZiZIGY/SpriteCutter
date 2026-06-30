@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, nextTick, useTemplateRef } from 'vue'
+import { useTheme } from 'vuetify'
+import { useResizeObserver, useRafFn, onKeyStroke } from '@vueuse/core'
 import { useSpriteStore } from '@/stores/spriteStore'
 
 const store = useSpriteStore()
+const vuetifyTheme = useTheme()
+const canvasBg = computed(() => vuetifyTheme.current.value.dark ? '#080812' : '#e8ecf0')
 
-const viewportRef = ref<HTMLDivElement>()
-const canvasRef = ref<HTMLCanvasElement>()
+const viewportRef = useTemplateRef<HTMLDivElement>('viewportRef')
+const canvasRef = useTemplateRef<HTMLCanvasElement>('canvasRef')
 
 // ─── Camera ──────────────────────────────────────────────────────────────────
 const zoom = ref(1)
@@ -32,26 +36,10 @@ function resizeCanvas() {
   canvas.height = viewport.clientHeight
 }
 
-let resizeObserver: ResizeObserver
-onMounted(() => {
-  resizeObserver = new ResizeObserver(resizeCanvas)
-  resizeObserver.observe(viewportRef.value!)
-  resizeCanvas()
-  requestAnimationFrame(loop)
-})
-onUnmounted(() => {
-  resizeObserver?.disconnect()
-  running = false
-})
+useResizeObserver(viewportRef, resizeCanvas)
 
 // ─── Render loop ──────────────────────────────────────────────────────────────
-let running = true
-
-function loop() {
-  if (!running) return
-  render()
-  requestAnimationFrame(loop)
-}
+useRafFn(render)
 
 function hexToRgba(hex: string, opacity: number): string {
   const r = parseInt(hex.slice(1, 3), 16)
@@ -64,125 +52,57 @@ function render() {
   const canvas = canvasRef.value
   if (!canvas) return
   const ctx = canvas.getContext('2d')!
-  const canvasWidth = canvas.width
-  const canvasHeight = canvas.height
 
-  ctx.clearRect(0, 0, canvasWidth, canvasHeight)
-
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
   if (!imgEl?.complete || !store.imageSrc) return
 
   ctx.save()
   ctx.translate(panX.value, panY.value)
   ctx.scale(zoom.value, zoom.value)
 
-  // Изображение
   ctx.imageSmoothingEnabled = zoom.value < 1
   ctx.drawImage(imgEl, 0, 0)
 
-  const screenLineWidth = 1 / zoom.value
-  const gridColorBase = hexToRgba(store.gridColor, store.gridOpacity)
-  const gridColorSelected = hexToRgba(store.gridColor, Math.min(1, store.gridOpacity + 0.3))
+  const lw = 1 / zoom.value
+  const colorBase = hexToRgba(store.gridColor, 0.65)
+  const colorSelected = hexToRgba(store.gridColor, 0.95)
 
-  // Ячейки
   for (const cell of store.activeCells) {
     if (cell.selected) {
       ctx.fillStyle = hexToRgba(store.gridColor, 0.28)
       ctx.fillRect(cell.x, cell.y, cell.width, cell.height)
-      ctx.strokeStyle = gridColorSelected
+      ctx.strokeStyle = colorSelected
     } else {
-      ctx.strokeStyle = gridColorBase
+      ctx.strokeStyle = colorBase
     }
-    ctx.lineWidth = screenLineWidth
-    ctx.strokeRect(
-      cell.x + screenLineWidth / 2,
-      cell.y + screenLineWidth / 2,
-      cell.width - screenLineWidth,
-      cell.height - screenLineWidth
-    )
+    ctx.lineWidth = lw
+    ctx.strokeRect(cell.x + lw / 2, cell.y + lw / 2, cell.width - lw, cell.height - lw)
   }
 
-  // Свободные линии
-  if (store.gridMode === 'free') {
-    ctx.strokeStyle = hexToRgba(store.gridColor, Math.min(1, store.gridOpacity + 0.25))
-    ctx.lineWidth = 1.5 / zoom.value
-    for (const line of store.freeLines) {
-      ctx.beginPath()
-      if (line.axis === 'x') {
-        ctx.moveTo(line.position, 0)
-        ctx.lineTo(line.position, store.imageHeight)
-      } else {
-        ctx.moveTo(0, line.position)
-        ctx.lineTo(store.imageWidth, line.position)
-      }
-      ctx.stroke()
-    }
-  }
-
-  // Режим смещений: рисуем смещённый контур и точку-якорь в каждой ячейке
+  // Боксы смещения
   if (store.showOffsets) {
-    const dotRadius = 5 / zoom.value
-    const activeDotRadius = 7 / zoom.value
-
     for (const cell of store.activeCells) {
       const offset = store.getCellOffset(cell.col, cell.row)
-      const hasOffset = offset.x !== 0 || offset.y !== 0
+      const boxX = cell.x + offset.x
+      const boxY = cell.y + offset.y
+      const isDragging = draggingDot.value?.col === cell.col && draggingDot.value?.row === cell.row
 
-      // Смещённый контур ячейки
-      if (hasOffset) {
-        ctx.strokeStyle = 'rgba(251, 191, 36, 0.45)'
-        ctx.lineWidth = 1 / zoom.value
-        ctx.setLineDash([4 / zoom.value, 3 / zoom.value])
-        ctx.strokeRect(
-          cell.x + offset.x,
-          cell.y + offset.y,
-          cell.width,
-          cell.height
-        )
-        ctx.setLineDash([])
+      ctx.fillStyle = hexToRgba(store.gridColor, isDragging ? 0.35 : 0.15)
+      ctx.fillRect(boxX, boxY, cell.width, cell.height)
 
-        // Стрелка от оригинала к смещению
-        ctx.strokeStyle = 'rgba(251, 191, 36, 0.3)'
-        ctx.lineWidth = 0.5 / zoom.value
-        ctx.beginPath()
-        ctx.moveTo(cell.x + cell.width / 2, cell.y + cell.height / 2)
-        ctx.lineTo(cell.x + offset.x + cell.width / 2, cell.y + offset.y + cell.height / 2)
-        ctx.stroke()
-      }
+      ctx.strokeStyle = hexToRgba(store.gridColor, isDragging ? 1 : 0.75)
+      ctx.lineWidth = 2 / zoom.value
+      ctx.setLineDash([5 / zoom.value, 3 / zoom.value])
+      ctx.strokeRect(boxX + 1 / zoom.value, boxY + 1 / zoom.value, cell.width - 2 / zoom.value, cell.height - 2 / zoom.value)
+      ctx.setLineDash([])
 
-      // Точка-якорь (в центре смещённой ячейки)
-      const dotX = cell.x + offset.x + cell.width / 2
-      const dotY = cell.y + offset.y + cell.height / 2
-      const isDraggingThis = (
-        draggingDotCell !== null &&
-        draggingDotCell.col === cell.col &&
-        draggingDotCell.row === cell.row
-      )
-
-      ctx.fillStyle = isDraggingThis
-        ? 'rgba(251, 191, 36, 1.0)'
-        : hasOffset
-          ? 'rgba(251, 191, 36, 0.85)'
-          : 'rgba(251, 191, 36, 0.5)'
-
+      // Маленький центральный маркер
+      const cx = boxX + cell.width / 2
+      const cy = boxY + cell.height / 2
       ctx.beginPath()
-      ctx.arc(dotX, dotY, isDraggingThis ? activeDotRadius : dotRadius, 0, Math.PI * 2)
+      ctx.arc(cx, cy, 3 / zoom.value, 0, Math.PI * 2)
+      ctx.fillStyle = hexToRgba(store.gridColor, 0.9)
       ctx.fill()
-
-      // Обводка точки
-      ctx.strokeStyle = 'rgba(20, 20, 36, 0.6)'
-      ctx.lineWidth = 1 / zoom.value
-      ctx.stroke()
-
-      // Подпись смещения если есть
-      if (hasOffset) {
-        ctx.fillStyle = 'rgba(251, 191, 36, 0.85)'
-        ctx.font = `${10 / zoom.value}px monospace`
-        ctx.fillText(
-          `${offset.x > 0 ? '+' : ''}${offset.x}, ${offset.y > 0 ? '+' : ''}${offset.y}`,
-          cell.x + offset.x + 3 / zoom.value,
-          cell.y + offset.y + 12 / zoom.value
-        )
-      }
     }
   }
 
@@ -201,22 +121,22 @@ function fitToScreen() {
 
 function adjustZoom(factor: number) {
   const viewport = viewportRef.value!
-  const centerX = viewport.clientWidth / 2
-  const centerY = viewport.clientHeight / 2
+  const cx = viewport.clientWidth / 2
+  const cy = viewport.clientHeight / 2
   const newZoom = Math.max(0.04, Math.min(32, zoom.value * factor))
-  panX.value = centerX - (centerX - panX.value) * (newZoom / zoom.value)
-  panY.value = centerY - (centerY - panY.value) * (newZoom / zoom.value)
+  panX.value = cx - (cx - panX.value) * (newZoom / zoom.value)
+  panY.value = cy - (cy - panY.value) * (newZoom / zoom.value)
   zoom.value = newZoom
 }
 
 function onWheel(e: WheelEvent) {
   const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12
   const rect = canvasRef.value!.getBoundingClientRect()
-  const mouseX = e.clientX - rect.left
-  const mouseY = e.clientY - rect.top
+  const mx = e.clientX - rect.left
+  const my = e.clientY - rect.top
   const newZoom = Math.max(0.04, Math.min(32, zoom.value * factor))
-  panX.value = mouseX - (mouseX - panX.value) * (newZoom / zoom.value)
-  panY.value = mouseY - (mouseY - panY.value) * (newZoom / zoom.value)
+  panX.value = mx - (mx - panX.value) * (newZoom / zoom.value)
+  panY.value = my - (my - panY.value) * (newZoom / zoom.value)
   zoom.value = newZoom
 }
 
@@ -236,67 +156,35 @@ function getCellAt(worldX: number, worldY: number) {
   ) ?? null
 }
 
-function getLineNear(screenX: number, screenY: number) {
-  const rect = canvasRef.value!.getBoundingClientRect()
-  const mouseX = screenX - rect.left
-  const mouseY = screenY - rect.top
-  const threshold = 7
-  for (const line of store.freeLines) {
-    if (line.axis === 'x') {
-      if (Math.abs(line.position * zoom.value + panX.value - mouseX) < threshold) return line
-    } else {
-      if (Math.abs(line.position * zoom.value + panY.value - mouseY) < threshold) return line
-    }
-  }
-  return null
-}
-
-function getDotNear(worldX: number, worldY: number): { col: number; row: number } | null {
-  if (!store.showOffsets) return null
-  const threshold = 10 / zoom.value
-  for (const cell of store.activeCells) {
-    const offset = store.getCellOffset(cell.col, cell.row)
-    const dotX = cell.x + offset.x + cell.width / 2
-    const dotY = cell.y + offset.y + cell.height / 2
-    if (Math.hypot(worldX - dotX, worldY - dotY) < threshold) {
-      return { col: cell.col, row: cell.row }
-    }
-  }
-  return null
-}
-
 // ─── Input state ─────────────────────────────────────────────────────────────
 const spaceHeld = ref(false)
-type DragMode = 'pan' | 'line' | 'dot' | null
-const activeDrag = ref<DragMode>(null)
-
-// Только drags, начатые на канвасе, обрабатываем — защита от "зажал снаружи, въехал внутрь"
+const isPanning = ref(false)
+const draggingDot = ref<{ col: number; row: number } | null>(null)
 let dragInitiatedOnCanvas = false
-
 let lastPointerX = 0
 let lastPointerY = 0
 let pointerDownX = 0
 let pointerDownY = 0
 let movedSinceDown = false
 
-// Линия перетаскивания
-let draggingLineId: string | null = null
-let lineDragAxis: 'x' | 'y' = 'x'
-let lineDragStartScreen = 0
-let lineDragStartPos = 0
-
-// Точка смещения перетаскивания
-let draggingDotCell: { col: number; row: number } | null = null
-let dotDragStartOffsetX = 0
-let dotDragStartOffsetY = 0
+// ─── Offset box hit test ──────────────────────────────────────────────────────
+function getOffsetBoxAt(worldX: number, worldY: number) {
+  if (!store.showOffsets) return null
+  for (const cell of store.activeCells) {
+    const offset = store.getCellOffset(cell.col, cell.row)
+    const boxX = cell.x + offset.x
+    const boxY = cell.y + offset.y
+    if (worldX >= boxX && worldX < boxX + cell.width && worldY >= boxY && worldY < boxY + cell.height) {
+      return cell
+    }
+  }
+  return null
+}
 
 // ─── Pointer events ───────────────────────────────────────────────────────────
 function onPointerDown(e: PointerEvent) {
-  // Захватываем указатель — все последующие события будут приходить сюда,
-  // даже если курсор выйдет за пределы элемента
   ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   viewportRef.value?.focus()
-
   dragInitiatedOnCanvas = true
   lastPointerX = e.clientX
   lastPointerY = e.clientY
@@ -304,41 +192,19 @@ function onPointerDown(e: PointerEvent) {
   pointerDownY = e.clientY
   movedSinceDown = false
 
-  // Средняя кнопка или пробел — всегда пан
-  if (e.button === 1 || spaceHeld.value) {
-    activeDrag.value = 'pan'
-    e.preventDefault()
-    return
-  }
-
-  if (e.button === 0) {
+  if (e.button === 0 && store.showOffsets && !spaceHeld.value) {
     const { x: worldX, y: worldY } = screenToWorld(e.clientX, e.clientY)
-
-    // Сначала проверяем точки смещений (приоритет выше линий)
-    const dotCell = getDotNear(worldX, worldY)
-    if (dotCell) {
-      const currentOffset = store.getCellOffset(dotCell.col, dotCell.row)
-      draggingDotCell = dotCell
-      dotDragStartOffsetX = currentOffset.x
-      dotDragStartOffsetY = currentOffset.y
-      activeDrag.value = 'dot'
+    const hitCell = getOffsetBoxAt(worldX, worldY)
+    if (hitCell) {
+      draggingDot.value = { col: hitCell.col, row: hitCell.row }
       e.preventDefault()
       return
     }
+  }
 
-    // Затем свободные линии
-    if (store.gridMode === 'free') {
-      const line = getLineNear(e.clientX, e.clientY)
-      if (line) {
-        draggingLineId = line.id
-        lineDragAxis = line.axis
-        lineDragStartScreen = line.axis === 'x' ? e.clientX : e.clientY
-        lineDragStartPos = line.position
-        activeDrag.value = 'line'
-        e.preventDefault()
-        return
-      }
-    }
+  if (e.button === 1 || spaceHeld.value) {
+    isPanning.value = true
+    e.preventDefault()
   }
 }
 
@@ -348,113 +214,68 @@ function onPointerMove(e: PointerEvent) {
   lastPointerX = e.clientX
   lastPointerY = e.clientY
 
-  // Если drag начался снаружи канваса — игнорируем всё кроме позиции
   if (!dragInitiatedOnCanvas) return
+
+  if (draggingDot.value) {
+    const current = store.getCellOffset(draggingDot.value.col, draggingDot.value.row)
+    store.setCellOffset(draggingDot.value.col, draggingDot.value.row, {
+      x: current.x + deltaX / zoom.value,
+      y: current.y + deltaY / zoom.value,
+    })
+    return
+  }
 
   if (Math.hypot(e.clientX - pointerDownX, e.clientY - pointerDownY) > 4) movedSinceDown = true
 
-  // Перетаскивание точки смещения
-  if (activeDrag.value === 'dot' && draggingDotCell) {
-    const totalDeltaX = (e.clientX - pointerDownX) / zoom.value
-    const totalDeltaY = (e.clientY - pointerDownY) / zoom.value
-    store.setCellOffset(
-      draggingDotCell.col,
-      draggingDotCell.row,
-      dotDragStartOffsetX + totalDeltaX,
-      dotDragStartOffsetY + totalDeltaY
-    )
-    return
-  }
+  if (e.buttons === 1 && movedSinceDown && !isPanning.value && !spaceHeld.value) isPanning.value = true
+  if (e.buttons === 4 && !isPanning.value) isPanning.value = true
 
-  // Перетаскивание линии
-  if (activeDrag.value === 'line' && draggingLineId) {
-    const screenDelta = lineDragAxis === 'x'
-      ? e.clientX - lineDragStartScreen
-      : e.clientY - lineDragStartScreen
-    const worldDelta = screenDelta / zoom.value
-    const maxPosition = lineDragAxis === 'x' ? store.imageWidth : store.imageHeight
-    store.updateFreeLine(
-      draggingLineId,
-      Math.max(1, Math.min(maxPosition - 1, Math.round(lineDragStartPos + worldDelta)))
-    )
-    return
-  }
-
-  // Пан: активируем если началось с нашего pointerdown
-  if (e.buttons === 1 && movedSinceDown && activeDrag.value === null) activeDrag.value = 'pan'
-  if (e.buttons === 4 && activeDrag.value === null) activeDrag.value = 'pan'
-
-  if (activeDrag.value === 'pan') {
+  if (isPanning.value) {
     panX.value += deltaX
     panY.value += deltaY
   }
 }
 
 function onPointerUp(e: PointerEvent) {
-  // Клик без движения — переключаем ячейку
-  if (
-    dragInitiatedOnCanvas &&
-    e.button === 0 &&
-    !movedSinceDown &&
-    activeDrag.value !== 'line' &&
-    activeDrag.value !== 'dot'
-  ) {
+  if (draggingDot.value) {
+    draggingDot.value = null
+    dragInitiatedOnCanvas = false
+    return
+  }
+  if (dragInitiatedOnCanvas && e.button === 0 && !movedSinceDown && !spaceHeld.value) {
     const { x: worldX, y: worldY } = screenToWorld(e.clientX, e.clientY)
     const cell = getCellAt(worldX, worldY)
     if (cell) store.toggleCell(cell.col, cell.row)
   }
-
   dragInitiatedOnCanvas = false
-  activeDrag.value = null
-  draggingLineId = null
-  draggingDotCell = null
+  isPanning.value = false
 }
 
 // ─── Keyboard ─────────────────────────────────────────────────────────────────
-function onKeyDown(e: KeyboardEvent) {
-  if (e.code === 'Space') { spaceHeld.value = true; e.preventDefault() }
-  if (e.code === 'Digit0' || e.code === 'Numpad0') fitToScreen()
-}
-function onKeyUp(e: KeyboardEvent) {
-  if (e.code === 'Space') { spaceHeld.value = false; activeDrag.value = null }
-}
-
-// ─── Двойной клик: добавить свободную линию ───────────────────────────────────
-function onDblClick(e: MouseEvent) {
-  if (store.gridMode !== 'free') return
-  const { x: worldX, y: worldY } = screenToWorld(e.clientX, e.clientY)
-  if (worldX < 0 || worldX > store.imageWidth || worldY < 0 || worldY > store.imageHeight) return
-  const nearVertical = Math.min(worldX, store.imageWidth - worldX)
-  const nearHorizontal = Math.min(worldY, store.imageHeight - worldY)
-  store.addFreeLine(
-    nearVertical < nearHorizontal ? 'x' : 'y',
-    Math.round(nearVertical < nearHorizontal ? worldX : worldY)
-  )
-}
+onKeyStroke(' ', (e) => { spaceHeld.value = true; e.preventDefault() }, { target: viewportRef })
+onKeyStroke(' ', () => { spaceHeld.value = false; isPanning.value = false }, { target: viewportRef, eventName: 'keyup' })
+onKeyStroke('0', () => fitToScreen(), { target: viewportRef })
 </script>
 
 <template>
   <div
     ref="viewportRef"
     class="viewport"
+    :style="{ background: canvasBg }"
     :class="{
-      'cursor-grab': spaceHeld && !activeDrag,
-      'cursor-grabbing': activeDrag === 'pan',
-      'cursor-crosshair': !spaceHeld && !activeDrag && !store.showOffsets,
-      'cursor-move': !spaceHeld && !activeDrag && store.showOffsets,
+      'cursor-grab': spaceHeld && !isPanning,
+      'cursor-grabbing': isPanning || draggingDot,
+      'cursor-move': store.showOffsets && !spaceHeld && !isPanning,
+      'cursor-crosshair': !store.showOffsets && !spaceHeld && !isPanning,
     }"
     tabindex="0"
     @wheel.prevent="onWheel"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
-    @keydown="onKeyDown"
-    @keyup="onKeyUp"
-    @dblclick="onDblClick"
   >
     <canvas ref="canvasRef" style="display: block; width: 100%; height: 100%" />
 
-    <!-- Спиннер применения сетки -->
     <Transition name="fade">
       <div v-if="store.isApplying" class="canvas-overlay">
         <VProgressCircular indeterminate color="primary" size="48" width="3" />
@@ -462,7 +283,6 @@ function onDblClick(e: MouseEvent) {
       </div>
     </Transition>
 
-    <!-- HUD зума -->
     <div class="hud">
       <div class="zoom-control">
         <button class="zoom-btn" @click.stop="adjustZoom(0.8)">
@@ -490,14 +310,13 @@ function onDblClick(e: MouseEvent) {
   width: 100%;
   position: relative;
   overflow: hidden;
-  background: #080812;
   border-radius: 12px;
   outline: none;
 }
 .cursor-grab      { cursor: grab; }
 .cursor-grabbing  { cursor: grabbing; }
 .cursor-crosshair { cursor: crosshair; }
-.cursor-move      { cursor: default; }
+.cursor-move      { cursor: move; }
 
 .canvas-overlay {
   position: absolute;

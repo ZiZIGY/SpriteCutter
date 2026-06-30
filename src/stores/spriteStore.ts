@@ -1,11 +1,9 @@
 import { computed, ref } from 'vue';
-
 import { defineStore } from 'pinia';
 
-export interface GridLine {
-  id: string;
-  position: number;
-  axis: 'x' | 'y';
+export interface CellOffset {
+  x: number;
+  y: number;
 }
 
 export interface SpriteCell {
@@ -18,11 +16,6 @@ export interface SpriteCell {
   selected: boolean;
 }
 
-export interface CellOffset {
-  x: number;
-  y: number;
-}
-
 export const useSpriteStore = defineStore('sprite', () => {
   const imageFile = ref<File | null>(null);
   const imageSrc = ref<string>('');
@@ -30,7 +23,6 @@ export const useSpriteStore = defineStore('sprite', () => {
   const imageHeight = ref(0);
   const isApplying = ref(false);
 
-  const gridMode = ref<'uniform' | 'free'>('uniform');
   const cellWidth = ref(64);
   const cellHeight = ref(64);
   const offsetX = ref(0);
@@ -38,11 +30,7 @@ export const useSpriteStore = defineStore('sprite', () => {
   const gapX = ref(0);
   const gapY = ref(0);
 
-  const freeLines = ref<GridLine[]>([]);
-
-  const gridColor = ref('#7C3AED');
-  const gridOpacity = ref(0.65);
-
+  const gridColor = ref('#FFFFFF');
   const showOffsets = ref(false);
   const cellOffsets = ref<Record<string, CellOffset>>({});
 
@@ -73,7 +61,7 @@ export const useSpriteStore = defineStore('sprite', () => {
     }
   }
 
-  const uniformCells = computed<SpriteCell[]>(() => {
+  const activeCells = computed<SpriteCell[]>(() => {
     if (!imageSrc.value) return [];
     const cells: SpriteCell[] = [];
     let row = 0;
@@ -84,10 +72,7 @@ export const useSpriteStore = defineStore('sprite', () => {
       while (x + cellWidth.value <= imageWidth.value) {
         const key = `${col}_${row}`;
         cells.push({
-          col,
-          row,
-          x,
-          y,
+          col, row, x, y,
           width: cellWidth.value,
           height: cellHeight.value,
           selected: selectedCells.value.has(key),
@@ -101,58 +86,6 @@ export const useSpriteStore = defineStore('sprite', () => {
     return cells;
   });
 
-  const freeCells = computed<SpriteCell[]>(() => {
-    if (!imageSrc.value) return [];
-    const xs = [
-      0,
-      ...freeLines.value
-        .filter((l) => l.axis === 'x')
-        .map((l) => l.position)
-        .sort((a, b) => a - b),
-      imageWidth.value,
-    ];
-    const ys = [
-      0,
-      ...freeLines.value
-        .filter((l) => l.axis === 'y')
-        .map((l) => l.position)
-        .sort((a, b) => a - b),
-      imageHeight.value,
-    ];
-    const cells: SpriteCell[] = [];
-    for (let row = 0; row < ys.length - 1; row++) {
-      for (let col = 0; col < xs.length - 1; col++) {
-        const key = `${col}_${row}`;
-        cells.push({
-          col,
-          row,
-          x: xs[col],
-          y: ys[row],
-          width: xs[col + 1] - xs[col],
-          height: ys[row + 1] - ys[row],
-          selected: selectedCells.value.has(key),
-        });
-      }
-    }
-    return cells;
-  });
-
-  const activeCells = computed(() =>
-    gridMode.value === 'uniform' ? uniformCells.value : freeCells.value
-  );
-
-  function getCellOffset(col: number, row: number): CellOffset {
-    return cellOffsets.value[`${col}_${row}`] ?? { x: 0, y: 0 };
-  }
-
-  function setCellOffset(col: number, row: number, x: number, y: number) {
-    cellOffsets.value[`${col}_${row}`] = { x: Math.round(x), y: Math.round(y) };
-  }
-
-  function resetCellOffsets() {
-    cellOffsets.value = {};
-  }
-
   function toggleCell(col: number, row: number) {
     const key = `${col}_${row}`;
     if (selectedCells.value.has(key)) selectedCells.value.delete(key);
@@ -160,41 +93,23 @@ export const useSpriteStore = defineStore('sprite', () => {
   }
 
   function selectAll() {
-    activeCells.value.forEach((cell) =>
-      selectedCells.value.add(`${cell.col}_${cell.row}`)
-    );
+    activeCells.value.forEach((cell) => selectedCells.value.add(`${cell.col}_${cell.row}`));
   }
 
   function deselectAll() {
     selectedCells.value.clear();
   }
 
-  function initFreeGridFromUniform() {
-    freeLines.value = [];
-    let id = 0;
-    let x = offsetX.value + cellWidth.value;
-    while (x < imageWidth.value) {
-      freeLines.value.push({ id: String(id++), position: x, axis: 'x' });
-      x += cellWidth.value + gapX.value;
-    }
-    let y = offsetY.value + cellHeight.value;
-    while (y < imageHeight.value) {
-      freeLines.value.push({ id: String(id++), position: y, axis: 'y' });
-      y += cellHeight.value + gapY.value;
-    }
+  function getCellOffset(col: number, row: number): CellOffset {
+    return cellOffsets.value[`${col}_${row}`] ?? { x: 0, y: 0 };
   }
 
-  function updateFreeLine(id: string, position: number) {
-    const line = freeLines.value.find((l) => l.id === id);
-    if (line) line.position = Math.max(0, position);
+  function setCellOffset(col: number, row: number, offset: CellOffset) {
+    cellOffsets.value[`${col}_${row}`] = offset;
   }
 
-  function addFreeLine(axis: 'x' | 'y', position: number) {
-    freeLines.value.push({ id: String(Date.now()), position, axis });
-  }
-
-  function removeFreeLine(id: string) {
-    freeLines.value = freeLines.value.filter((l) => l.id !== id);
+  function resetCellOffsets() {
+    cellOffsets.value = {};
   }
 
   function reset() {
@@ -203,47 +118,18 @@ export const useSpriteStore = defineStore('sprite', () => {
     imageWidth.value = 0;
     imageHeight.value = 0;
     selectedCells.value.clear();
-    freeLines.value = [];
     cellOffsets.value = {};
-    gridMode.value = 'uniform';
-    showOffsets.value = false;
   }
 
   return {
-    imageFile,
-    imageSrc,
-    imageWidth,
-    imageHeight,
-    isApplying,
-    gridMode,
-    cellWidth,
-    cellHeight,
-    offsetX,
-    offsetY,
-    gapX,
-    gapY,
-    freeLines,
-    gridColor,
-    gridOpacity,
-    showOffsets,
-    cellOffsets,
-    exportGap,
-    exportFormat,
-    selectedCells,
-    uniformCells,
-    freeCells,
+    imageFile, imageSrc, imageWidth, imageHeight, isApplying,
+    cellWidth, cellHeight, offsetX, offsetY, gapX, gapY,
+    gridColor, showOffsets, cellOffsets,
+    exportGap, exportFormat, selectedCells,
     activeCells,
     loadImage,
-    getCellOffset,
-    setCellOffset,
-    resetCellOffsets,
-    toggleCell,
-    selectAll,
-    deselectAll,
-    initFreeGridFromUniform,
-    updateFreeLine,
-    addFreeLine,
-    removeFreeLine,
+    toggleCell, selectAll, deselectAll,
+    getCellOffset, setCellOffset, resetCellOffsets,
     reset,
   };
 });

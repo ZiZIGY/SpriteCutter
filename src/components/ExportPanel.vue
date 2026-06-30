@@ -3,7 +3,7 @@
   import { useSpriteStore } from '@/stores/spriteStore';
 
   const store = useSpriteStore();
-  const loading = ref<'single' | 'sheet' | 'full' | 'json' | null>(null);
+  const loading = ref<'single' | 'sheet' | 'full' | 'json' | 'jsonAll' | null>(null);
 
   const exportAll = ref(false);
 
@@ -46,13 +46,12 @@
     const img = await loadImg();
     const cells = cellsToExport.value;
     for (const cell of cells) {
-      const offset = store.getCellOffset(cell.col, cell.row);
       const canvas = document.createElement('canvas');
       canvas.width = cell.width;
       canvas.height = cell.height;
       canvas.getContext('2d')!.drawImage(
         img,
-        cell.x + offset.x, cell.y + offset.y, cell.width, cell.height,
+        cell.x, cell.y, cell.width, cell.height,
         0, 0, cell.width, cell.height
       );
       downloadCanvas(
@@ -82,10 +81,9 @@
 
     const ctx = canvas.getContext('2d')!;
     for (const cell of cells) {
-      const offset = store.getCellOffset(cell.col, cell.row);
       ctx.drawImage(
         img,
-        cell.x + offset.x, cell.y + offset.y, cell.width, cell.height,
+        cell.x, cell.y, cell.width, cell.height,
         cell.col * (cellWidth + gap), cell.row * (cellHeight + gap), cell.width, cell.height
       );
     }
@@ -111,10 +109,9 @@
 
     const ctx = canvas.getContext('2d')!;
     for (const cell of cells) {
-      const offset = store.getCellOffset(cell.col, cell.row);
       ctx.drawImage(
         img,
-        cell.x + offset.x, cell.y + offset.y, cell.width, cell.height,
+        cell.x, cell.y, cell.width, cell.height,
         cell.col * (cellWidth + gap), cell.row * (cellHeight + gap), cell.width, cell.height
       );
     }
@@ -123,81 +120,64 @@
   }
 
   // Экспорт JSON в формате TexturePacker Hash (совместим с Phaser, PixiJS, Unity)
-  function exportJSON() {
-    loading.value = 'json';
+  function buildAtlas(cells: typeof store.activeCells) {
+    const imageName = store.imageFile?.name ?? 'spritesheet.png'
+    const gap = store.exportGap
+    const maxCol = Math.max(...cells.map((c) => c.col))
+    const maxRow = Math.max(...cells.map((c) => c.row))
+    const cellW = Math.max(...cells.map((c) => c.width))
+    const cellH = Math.max(...cells.map((c) => c.height))
 
-    const cells = cellsToExport.value;
-    if (!cells.length) { loading.value = null; return; }
-
-    const imageName = store.imageFile?.name ?? 'spritesheet.png';
-    const gap = store.exportGap;
-    const maxCol = Math.max(...cells.map((c) => c.col));
-    const maxRow = Math.max(...cells.map((c) => c.row));
-    const cellW = Math.max(...cells.map((c) => c.width));
-    const cellH = Math.max(...cells.map((c) => c.height));
-
-    // frames: ключ → данные спрайта (TexturePacker JSON Hash)
-    const frames: Record<string, object> = {};
+    const frames: Record<string, object> = {}
     for (const cell of cells) {
-      const offset = store.getCellOffset(cell.col, cell.row);
-      const key = `sprite_${String(cell.row).padStart(2, '0')}_${String(cell.col).padStart(2, '0')}`;
-
-      // destX/Y — позиция в собранном листе (при экспорте "Собрать в лист")
-      const destX = cell.col * (cellW + gap);
-      const destY = cell.row * (cellH + gap);
-
+      const key = `sprite_${String(cell.row).padStart(2, '0')}_${String(cell.col).padStart(2, '0')}`
       frames[key] = {
-        // frame — координаты в собранном листе
-        frame: { x: destX, y: destY, w: cell.width, h: cell.height },
-        // sourceFrame — координаты в оригинальном изображении (с учётом смещения)
-        sourceFrame: {
-          x: cell.x + offset.x,
-          y: cell.y + offset.y,
-          w: cell.width,
-          h: cell.height,
-        },
+        frame: { x: cell.col * (cellW + gap), y: cell.row * (cellH + gap), w: cell.width, h: cell.height },
+        sourceFrame: { x: cell.x, y: cell.y, w: cell.width, h: cell.height },
         rotated: false,
         trimmed: false,
         spriteSourceSize: { x: 0, y: 0, w: cell.width, h: cell.height },
         sourceSize: { w: cell.width, h: cell.height },
-        // grid position для удобства
         col: cell.col,
         row: cell.row,
-      };
+      }
     }
 
-    const sheetW = (maxCol + 1) * cellW + maxCol * gap;
-    const sheetH = (maxRow + 1) * cellH + maxRow * gap;
-
-    const atlas = {
+    return {
       frames,
       meta: {
         app: 'SpriteCutter',
         image: imageName,
-        sourceImage: {
-          w: store.imageWidth,
-          h: store.imageHeight,
-        },
-        size: { w: sheetW, h: sheetH },
+        sourceImage: { w: store.imageWidth, h: store.imageHeight },
+        size: { w: (maxCol + 1) * cellW + maxCol * gap, h: (maxRow + 1) * cellH + maxRow * gap },
         scale: 1,
         format: store.exportFormat.toUpperCase(),
-        grid: {
-          mode: store.gridMode,
-          cellWidth: cellW,
-          cellHeight: cellH,
-          gap: gap,
-        },
+        grid: { cellWidth: cellW, cellHeight: cellH, gap },
       },
-    };
+    }
+  }
 
-    const baseName = imageName.replace(/\.[^.]+$/, '');
-    downloadJSON(atlas, `${baseName}_atlas`);
+  function exportJSON() {
+    loading.value = 'json';
+    const cells = cellsToExport.value;
+    if (!cells.length) { loading.value = null; return; }
+    const baseName = (store.imageFile?.name ?? 'spritesheet').replace(/\.[^.]+$/, '');
+    downloadJSON(buildAtlas(cells), `${baseName}_atlas`);
+    loading.value = null;
+  }
+
+  function exportJSONAll() {
+    loading.value = 'jsonAll';
+    const cells = store.activeCells;
+    if (!cells.length) { loading.value = null; return; }
+    const baseName = (store.imageFile?.name ?? 'spritesheet').replace(/\.[^.]+$/, '');
+    downloadJSON(buildAtlas(cells), `${baseName}_atlas_full`);
     loading.value = null;
   }
 </script>
 
 <template>
-  <p class="field-label">Формат и зазор</p>
+  <p class="text-overline text-medium-emphasis mb-1">Формат и зазор</p>
   <div class="two-col mb-3">
     <VSelect
       v-model="store.exportFormat"
@@ -236,7 +216,7 @@
   </p>
 
   <template v-if="!exportAll">
-    <p class="field-label">Выделение</p>
+    <p class="text-overline text-medium-emphasis mb-1">Выделение</p>
     <div class="two-col mb-4">
       <VBtn size="small" variant="tonal" @click="store.selectAll()">
         <VIcon start size="15">mdi-checkbox-multiple-marked-outline</VIcon>
@@ -254,7 +234,7 @@
     </div>
   </template>
 
-  <p class="field-label">Скачать</p>
+  <p class="text-overline text-medium-emphasis mb-1">Скачать</p>
   <div class="export-btns">
     <VBtn
       color="primary"
@@ -295,19 +275,34 @@
 
   <VDivider class="my-3" />
 
-  <p class="field-label">Атлас</p>
-  <VBtn
-    variant="tonal"
-    color="success"
-    size="small"
-    block
-    prependIcon="mdi-code-json"
-    :disabled="exportCount === 0"
-    :loading="loading === 'json'"
-    @click="exportJSON"
-  >
-    Экспорт JSON ({{ exportCount }})
-  </VBtn>
+  <p class="text-overline text-medium-emphasis mb-1">Атлас</p>
+  <div class="export-btns">
+    <VBtn
+      variant="tonal"
+      color="success"
+      size="small"
+      block
+      prependIcon="mdi-code-json"
+      :disabled="exportCount === 0"
+      :loading="loading === 'json'"
+      @click="exportJSON"
+    >
+      JSON выбранных ({{ exportCount }})
+    </VBtn>
+
+    <VBtn
+      variant="outlined"
+      color="success"
+      size="small"
+      block
+      prependIcon="mdi-code-json"
+      :disabled="!store.imageSrc"
+      :loading="loading === 'jsonAll'"
+      @click="exportJSONAll"
+    >
+      JSON весь лист ({{ store.activeCells.length }})
+    </VBtn>
+  </div>
 
   <VAlert
     type="info"
@@ -331,14 +326,6 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 8px;
-  }
-  .field-label {
-    font-size: 11px;
-    color: rgba(255, 255, 255, 0.45);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-bottom: 6px;
-    margin-top: 0;
   }
   .export-btns {
     display: flex;

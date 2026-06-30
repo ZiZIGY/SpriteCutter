@@ -1,4 +1,7 @@
 <script setup lang="ts">
+  import { computed } from 'vue';
+  import { useTheme } from 'vuetify';
+  import { useLocalStorage } from '@vueuse/core';
   import { useSpriteStore } from '@/stores/spriteStore';
   import UploadZone from '@/components/UploadZone.vue';
   import SpriteCanvas from '@/components/SpriteCanvas.vue';
@@ -6,6 +9,16 @@
   import ExportPanel from '@/components/ExportPanel.vue';
 
   const store = useSpriteStore();
+  const theme = useTheme();
+  const isDark = computed(() => theme.current.value.dark);
+
+  const savedTheme = useLocalStorage<'light' | 'dark'>('sprite-cutter-theme', 'dark');
+  theme.global.name.value = savedTheme.value;
+
+  function toggleTheme() {
+    savedTheme.value = isDark.value ? 'light' : 'dark';
+    theme.global.name.value = savedTheme.value;
+  }
 </script>
 
 <template>
@@ -34,8 +47,15 @@
           text="Новое"
           variant="tonal"
           size="small"
-          class="mr-4"
+          class="mr-2"
           @click="store.reset()"
+        />
+        <VBtn
+          :icon="isDark ? 'mdi-weather-sunny' : 'mdi-weather-night'"
+          variant="text"
+          size="small"
+          class="mr-2"
+          @click="toggleTheme"
         />
       </template>
     </VAppBar>
@@ -91,8 +111,8 @@
         <SpriteCanvas />
         <p class="text-caption text-disabled text-center shrink-0">
           Колёсико — zoom · Space + ЛКМ — перемещение · клик — выделить
-          <template v-if="store.gridMode === 'free'">
-            · жёлтые линии — тянуть · двойной клик — добавить линию
+          <template v-if="store.showOffsets">
+            · тяни точку — сдвинуть центр ячейки
           </template>
         </p>
       </div>
