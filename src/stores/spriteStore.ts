@@ -19,6 +19,16 @@ export interface SpriteCell {
   name: string;
 }
 
+export interface SpriteAnimation {
+  id: number;
+  name: string;
+  frames: string[]; // cell keys "col_row" in playback order
+  fps: number;
+}
+
+// What clicking / dragging on the canvas does
+export type CanvasMode = 'select' | 'offset' | 'exclude';
+
 export const useSpriteStore = defineStore('sprite', () => {
   const imageFile = ref<File | null>(null);
   const imageSrc = ref<string>('');
@@ -34,10 +44,9 @@ export const useSpriteStore = defineStore('sprite', () => {
   const gapY = ref(0);
 
   const gridColor = ref('#FFFFFF');
-  const showOffsets = ref(false);
+  const mode = ref<CanvasMode>('select');
   const cellOffsets = ref<Record<string, CellOffset>>({});
 
-  const excludeMode = ref(false);
   const excludedCells = ref<Set<string>>(new Set());
 
   const cellNames = ref<Record<string, string>>({});
@@ -49,9 +58,16 @@ export const useSpriteStore = defineStore('sprite', () => {
 
   const selectedCells = ref<Set<string>>(new Set());
 
+  const animations = ref<SpriteAnimation[]>([]);
+  let animIdSeq = 1;
+
   function loadImage(file: File) {
     imageFile.value = file;
     const url = URL.createObjectURL(file);
+    // Reset dimensions first: watchers keyed on [src, width, height] must not
+    // fire with the new src but stale sizes from the previous image.
+    imageWidth.value = 0;
+    imageHeight.value = 0;
     imageSrc.value = url;
     const img = new Image();
     img.onload = () => {
@@ -155,6 +171,36 @@ export const useSpriteStore = defineStore('sprite', () => {
     cellOffsets.value = {};
   }
 
+  // Frames are taken from the current selection in reading order (row by row)
+  function addAnimationFromSelection(): SpriteAnimation | null {
+    const frames = activeCells.value
+      .filter(
+        (c) => !c.excluded && selectedCells.value.has(`${c.col}_${c.row}`)
+      )
+      .sort((a, b) => a.row - b.row || a.col - b.col)
+      .map((c) => `${c.col}_${c.row}`);
+    if (!frames.length) return null;
+    const anim: SpriteAnimation = {
+      id: animIdSeq++,
+      name: `anim_${animations.value.length + 1}`,
+      frames,
+      fps: 10,
+    };
+    animations.value.push(anim);
+    return anim;
+  }
+
+  function removeAnimation(id: number) {
+    animations.value = animations.value.filter((a) => a.id !== id);
+  }
+
+  function selectAnimationFrames(id: number) {
+    const anim = animations.value.find((a) => a.id === id);
+    if (!anim) return;
+    selectedCells.value.clear();
+    anim.frames.forEach((key) => selectedCells.value.add(key));
+  }
+
   function reset() {
     imageFile.value = null;
     imageSrc.value = '';
@@ -164,6 +210,7 @@ export const useSpriteStore = defineStore('sprite', () => {
     excludedCells.value = new Set();
     cellOffsets.value = {};
     cellNames.value = {};
+    animations.value = [];
   }
 
   return {
@@ -179,9 +226,8 @@ export const useSpriteStore = defineStore('sprite', () => {
     gapX,
     gapY,
     gridColor,
-    showOffsets,
+    mode,
     cellOffsets,
-    excludeMode,
     excludedCells,
     cellNames,
     showNames,
@@ -189,8 +235,12 @@ export const useSpriteStore = defineStore('sprite', () => {
     exportGap,
     exportFormat,
     selectedCells,
+    animations,
     activeCells,
     loadImage,
+    addAnimationFromSelection,
+    removeAnimation,
+    selectAnimationFrames,
     toggleCell,
     selectAll,
     deselectAll,

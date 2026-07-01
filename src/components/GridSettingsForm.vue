@@ -1,28 +1,10 @@
 <script setup lang="ts">
-  import { ref, watch, useTemplateRef } from 'vue';
+  import { computed, ref, useTemplateRef } from 'vue';
   import { useSpriteStore } from '@/stores/spriteStore';
-  import { autoDetect, sampleBgHex } from '@/composables/useAutoDetect';
+  import { useDetect } from '@/composables/useDetect';
 
   const store = useSpriteStore();
   const formRef = useTemplateRef('formRef');
-
-  // ── auto-detect settings ────────────────────────────────────────────────────
-  const bgColor = ref('#000000');
-  const bgTolerance = ref(30);
-  const bgPickerOpen = ref(false);
-
-  watch(
-    () => store.imageSrc,
-    async (src) => {
-      if (!src) return;
-      try {
-        bgColor.value = await sampleBgHex(src, store.imageWidth, store.imageHeight);
-      } catch {
-        // keep default
-      }
-    },
-    { immediate: true }
-  );
 
   // ── grid form state ─────────────────────────────────────────────────────────
   const pending = ref({
@@ -32,47 +14,60 @@
     offsetY: store.offsetY,
     gapX: store.gapX,
     gapY: store.gapY,
-    cols: Math.floor(store.imageWidth / store.cellWidth) || 1,
-    rows: Math.floor(store.imageHeight / store.cellHeight) || 1,
   });
 
-  let syncLock = false;
-  watch(
-    () => pending.value.cellWidth,
-    (value) => {
-      if (syncLock || !value || !store.imageWidth) return;
-      syncLock = true;
-      pending.value.cols = Math.floor(store.imageWidth / value);
-      syncLock = false;
-    }
-  );
-  watch(
-    () => pending.value.cellHeight,
-    (value) => {
-      if (syncLock || !value || !store.imageHeight) return;
-      syncLock = true;
-      pending.value.rows = Math.floor(store.imageHeight / value);
-      syncLock = false;
-    }
-  );
-  watch(
-    () => pending.value.cols,
-    (value) => {
-      if (syncLock || !value || !store.imageWidth) return;
-      syncLock = true;
-      pending.value.cellWidth = Math.floor(store.imageWidth / value);
-      syncLock = false;
-    }
-  );
-  watch(
-    () => pending.value.rows,
-    (value) => {
-      if (syncLock || !value || !store.imageHeight) return;
-      syncLock = true;
-      pending.value.cellHeight = Math.floor(store.imageHeight / value);
-      syncLock = false;
-    }
-  );
+  // cols/rows are a derived view of the same grid — the exact formula the
+  // canvas uses to lay out cells. Editing them writes the cell size back,
+  // so the two pairs of fields never need watcher-based syncing.
+  const cols = computed({
+    get: () => {
+      const p = pending.value;
+      if (!store.imageWidth || !p.cellWidth) return 1;
+      return Math.max(
+        1,
+        Math.floor(
+          (store.imageWidth - p.offsetX + p.gapX) / (p.cellWidth + p.gapX)
+        )
+      );
+    },
+    set: (value) => {
+      if (!value || !store.imageWidth) return;
+      const p = pending.value;
+      p.cellWidth = Math.max(
+        1,
+        Math.floor((store.imageWidth - p.offsetX + p.gapX) / value) - p.gapX
+      );
+    },
+  });
+  const rows = computed({
+    get: () => {
+      const p = pending.value;
+      if (!store.imageHeight || !p.cellHeight) return 1;
+      return Math.max(
+        1,
+        Math.floor(
+          (store.imageHeight - p.offsetY + p.gapY) / (p.cellHeight + p.gapY)
+        )
+      );
+    },
+    set: (value) => {
+      if (!value || !store.imageHeight) return;
+      const p = pending.value;
+      p.cellHeight = Math.max(
+        1,
+        Math.floor((store.imageHeight - p.offsetY + p.gapY) / value) - p.gapY
+      );
+    },
+  });
+
+  const {
+    bgColor,
+    bgTolerance,
+    bgPickerOpen,
+    detecting,
+    detectFailed,
+    detect,
+  } = useDetect(pending);
 
   const rules = {
     cellW: [
@@ -102,46 +97,6 @@
   const waitFrame = () =>
     new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
-  const detecting = ref(false);
-  const detectFailed = ref(false);
-
-  async function detect() {
-    if (!store.imageSrc) return;
-    detecting.value = true;
-    detectFailed.value = false;
-    try {
-      const result = await autoDetect(
-        store.imageSrc,
-        store.imageWidth,
-        store.imageHeight,
-        bgColor.value,
-        bgTolerance.value,
-      );
-      if (!result) {
-        detectFailed.value = true;
-        return;
-      }
-      syncLock = true;
-      pending.value.cellWidth = result.cellWidth;
-      pending.value.cellHeight = result.cellHeight;
-      pending.value.offsetX = result.offsetX;
-      pending.value.offsetY = result.offsetY;
-      pending.value.gapX = result.gapX;
-      pending.value.gapY = result.gapY;
-      pending.value.cols = result.cols;
-      pending.value.rows = result.rows;
-      syncLock = false;
-      await apply();
-      store.resetCellOffsets();
-      for (const [key, offset] of Object.entries(result.cellOffsets)) {
-        const [col, row] = key.split('_').map(Number);
-        store.setCellOffset(col, row, offset);
-      }
-    } finally {
-      detecting.value = false;
-    }
-  }
-
   async function apply() {
     const { valid } = await formRef.value!.validate();
     if (!valid) return;
@@ -167,11 +122,9 @@
     ref="formRef"
     @submit.prevent="apply"
   >
-    <!-- ── auto-detect section ────────────────────────────────────────── -->
     <p class="text-overline text-medium-emphasis mb-2">Автоопределение</p>
 
     <div class="two-col mb-2">
-      <!-- Background color picker -->
       <div>
         <p class="field-label">Цвет фона</p>
         <VMenu
@@ -186,7 +139,11 @@
               block
               v-bind="mp"
               class="justify-start"
-              style="text-transform: none; font-family: monospace; font-size: 11px"
+              style="
+                text-transform: none;
+                font-family: monospace;
+                font-size: 11px;
+              "
             >
               <span
                 class="color-swatch mr-2"
@@ -196,7 +153,8 @@
               <VIcon
                 end
                 size="14"
-              >mdi-menu-down</VIcon>
+                >mdi-menu-down</VIcon
+              >
             </VBtn>
           </template>
           <VCard
@@ -232,7 +190,6 @@
         </VMenu>
       </div>
 
-      <!-- Tolerance -->
       <div>
         <p class="field-label">Допуск</p>
         <VNumberInput
@@ -255,7 +212,7 @@
       class="mb-3"
       :loading="detecting"
       prependIcon="mdi-auto-fix"
-      @click="detect"
+      @click="detect()"
     >
       Найти спрайты
     </VBtn>
@@ -275,7 +232,6 @@
 
     <VDivider class="mb-3" />
 
-    <!-- ── manual grid params ────────────────────────────────────────── -->
     <p class="text-overline text-medium-emphasis mb-1">Размер ячейки</p>
     <div class="two-col mb-3">
       <VNumberInput
@@ -347,7 +303,7 @@
     <p class="text-overline text-medium-emphasis mb-1">По числу ячеек</p>
     <div class="two-col mb-4">
       <VNumberInput
-        v-model="pending.cols"
+        v-model="cols"
         controlVariant="stacked"
         density="compact"
         variant="outlined"
@@ -356,7 +312,7 @@
         :rules="rules.cols"
       />
       <VNumberInput
-        v-model="pending.rows"
+        v-model="rows"
         controlVariant="stacked"
         density="compact"
         variant="outlined"

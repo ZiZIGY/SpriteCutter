@@ -8,6 +8,7 @@
   import GridSettings from '@/components/GridSettings.vue';
   import ExportPanel from '@/components/ExportPanel.vue';
   import SpriteNamesPanel from '@/components/SpriteNamesPanel.vue';
+  import AnimationsPanel from '@/components/AnimationsPanel.vue';
 
   const store = useSpriteStore();
   const theme = useTheme();
@@ -106,6 +107,20 @@
           </VExpansionPanelText>
         </VExpansionPanel>
 
+        <VExpansionPanel value="animations">
+          <VExpansionPanelTitle>
+            <VIcon
+              size="18"
+              class="mr-2"
+              >mdi-filmstrip</VIcon
+            >
+            Анимации
+          </VExpansionPanelTitle>
+          <VExpansionPanelText>
+            <AnimationsPanel />
+          </VExpansionPanelText>
+        </VExpansionPanel>
+
         <VExpansionPanel value="export">
           <VExpansionPanelTitle>
             <VIcon
@@ -145,7 +160,7 @@
           style="flex-shrink: 0"
         >
           Колёсико — zoom · СКМ/Пробел — перемещение · клик/тяни — выделение
-          <template v-if="store.showOffsets"> · тяни бокс — сдвинуть</template>
+          <template v-if="store.mode === 'offset'"> · тяни бокс — сдвинуть</template>
         </p>
       </div>
     </VMain>

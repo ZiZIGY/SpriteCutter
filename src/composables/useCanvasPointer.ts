@@ -1,10 +1,9 @@
 import { ref, computed, type Ref } from 'vue';
 import { onKeyStroke } from '@vueuse/core';
-import type { SpriteCell } from '@/stores/spriteStore';
+import type { SpriteCell, CanvasMode } from '@/stores/spriteStore';
 
 interface PointerStore {
-  showOffsets: boolean;
-  excludeMode: boolean;
+  mode: CanvasMode;
   activeCells: SpriteCell[];
   getCellOffset(col: number, row: number): { x: number; y: number };
   setCellOffset(
@@ -58,7 +57,7 @@ export function useCanvasPointer(
   }
 
   function getOffsetBoxAt(worldX: number, worldY: number): SpriteCell | null {
-    if (!store.showOffsets) return null;
+    if (store.mode !== 'offset') return null;
     for (const cell of store.activeCells) {
       const offset = store.getCellOffset(cell.col, cell.row);
       const boxX = cell.x + offset.x;
@@ -76,11 +75,11 @@ export function useCanvasPointer(
   }
 
   function paintField(cell: SpriteCell): boolean {
-    return store.excludeMode ? cell.excluded : cell.selected;
+    return store.mode === 'exclude' ? cell.excluded : cell.selected;
   }
 
   function paintToggle(cell: SpriteCell) {
-    if (store.excludeMode) store.toggleExcluded(cell.col, cell.row);
+    if (store.mode === 'exclude') store.toggleExcluded(cell.col, cell.row);
     else store.toggleCell(cell.col, cell.row);
   }
 
@@ -102,7 +101,7 @@ export function useCanvasPointer(
     }
 
     if (e.button === 0) {
-      if (store.showOffsets) {
+      if (store.mode === 'offset') {
         const { x: wx, y: wy } = screenToWorld(e.clientX, e.clientY);
         const hitCell = getOffsetBoxAt(wx, wy);
         if (hitCell) {

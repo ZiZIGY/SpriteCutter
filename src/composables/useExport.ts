@@ -80,6 +80,41 @@ export function useExport() {
     return img;
   }
 
+  interface FrameTag {
+    name: string;
+    from: number;
+    to: number;
+    direction: string;
+  }
+
+  // Animation name = frame name without its trailing index:
+  // "walk_1", "walk_2" → "walk"; default "sprite_00_01" → row group "sprite_00".
+  function animBaseName(frameName: string): string {
+    const base = frameName.replace(/[ _-]*\d+$/, '');
+    return base || frameName;
+  }
+
+  // Fallback when no animations are defined in the app: consecutive frames
+  // sharing a base name become one animation.
+  function groupByName(keys: string[]) {
+    const frameTags: FrameTag[] = [];
+    const animations: Record<string, string[]> = {};
+    let start = 0;
+    for (let i = 1; i <= keys.length; i++) {
+      if (i === keys.length || animBaseName(keys[i]) !== animBaseName(keys[start])) {
+        if (i - start >= 2) {
+          const name = animBaseName(keys[start]);
+          frameTags.push({ name, from: start, to: i - 1, direction: 'forward' });
+          animations[name] = (animations[name] ?? []).concat(
+            keys.slice(start, i)
+          );
+        }
+        start = i;
+      }
+    }
+    return { frameTags, animations };
+  }
+
   function buildAtlas(packed: PackedCell[]) {
     const imageName = store.imageFile?.name ?? 'spritesheet.png';
     const gap = store.exportGap;
@@ -89,6 +124,44 @@ export function useExport() {
     const cellH = Math.max(...packed.map((p) => p.cell.height));
 
     const names = resolveNames(packed);
+
+    // Animations defined in the app take priority; frame durations come from
+    // each animation's fps. Without them, fall back to name-based grouping.
+    const frameDurations = new Map<string, number>();
+    let frameTags: FrameTag[];
+    let animations: Record<string, string[]>;
+    if (store.animations.length) {
+      const keyToName = new Map<string, string>();
+      const keyToIndex = new Map<string, number>();
+      packed.forEach((p, i) => {
+        const key = `${p.cell.col}_${p.cell.row}`;
+        keyToName.set(key, names.get(p)!);
+        keyToIndex.set(key, i);
+      });
+
+      frameTags = [];
+      animations = {};
+      for (const anim of store.animations) {
+        const present = anim.frames.filter((key) => keyToName.has(key));
+        if (!present.length) continue;
+        const frameNames = present.map((key) => keyToName.get(key)!);
+        animations[anim.name] = frameNames;
+        const indices = present.map((key) => keyToIndex.get(key)!);
+        frameTags.push({
+          name: anim.name,
+          from: Math.min(...indices),
+          to: Math.max(...indices),
+          direction: 'forward',
+        });
+        const duration = Math.round(1000 / Math.max(1, anim.fps));
+        frameNames.forEach((n) => frameDurations.set(n, duration));
+      }
+    } else {
+      ({ frameTags, animations } = groupByName(
+        packed.map((p) => names.get(p)!)
+      ));
+    }
+
     const frames: Record<string, object> = {};
     for (const p of packed) {
       const { cell, outCol, outRow } = p;
@@ -112,6 +185,7 @@ export function useExport() {
         spriteSourceSize: { x: 0, y: 0, w: cell.width, h: cell.height },
         sourceSize: { w: cell.width, h: cell.height },
         pivot: { x: -offset.x / cell.width, y: -offset.y / cell.height },
+        duration: frameDurations.get(key) ?? 100,
         col: outCol,
         row: outRow,
       };
@@ -119,6 +193,7 @@ export function useExport() {
 
     return {
       frames,
+      animations,
       meta: {
         app: 'SpriteCutter',
         image: imageName,
@@ -130,6 +205,7 @@ export function useExport() {
         scale: 1,
         format: store.exportFormat.toUpperCase(),
         grid: { cellWidth: cellW, cellHeight: cellH, gap },
+        frameTags,
       },
     };
   }

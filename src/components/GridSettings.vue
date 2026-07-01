@@ -1,5 +1,5 @@
 <script setup lang="ts">
-  import { ref, watch } from 'vue';
+  import { ref } from 'vue';
   import { useSpriteStore } from '@/stores/spriteStore';
   import GridSettingsForm from './GridSettingsForm.vue';
 
@@ -10,19 +10,11 @@
     store.gridColor = value.slice(0, 7);
   }
 
-  watch(
-    () => store.excludeMode,
-    (value) => {
-      if (value) store.showOffsets = false;
-    }
-  );
-
-  watch(
-    () => store.showOffsets,
-    (value) => {
-      if (value) store.excludeMode = false;
-    }
-  );
+  const modeHints: Record<string, string> = {
+    select: 'Клик/протяни по ячейкам, чтобы выделить их для экспорта',
+    offset: 'Тяни бокс внутри ячейки, чтобы сдвинуть центр спрайта',
+    exclude: 'Клик/протяни по ячейкам, чтобы исключить их из экспорта',
+  };
 </script>
 
 <template>
@@ -107,78 +99,70 @@
 
   <VDivider class="my-4" />
 
-  <p class="text-overline text-medium-emphasis mb-1">Смещение точек</p>
-  <VCheckbox
-    v-model="store.showOffsets"
+  <p class="text-overline text-medium-emphasis mb-1">Режим холста</p>
+  <VBtnToggle
+    v-model="store.mode"
+    mandatory
     density="compact"
-    hideDetails
-    color="primary"
-    class="ml-n1 mb-2"
+    variant="outlined"
+    divided
+    class="mode-toggle mb-2"
   >
-    <template #label>
-      <span class="text-body-2 ml-2">Режим смещения</span>
-    </template>
-  </VCheckbox>
+    <VBtn
+      value="select"
+      size="small"
+      prependIcon="mdi-cursor-default-click-outline"
+    >
+      Выбор
+    </VBtn>
+    <VBtn
+      value="offset"
+      size="small"
+      prependIcon="mdi-arrow-all"
+    >
+      Сдвиг
+    </VBtn>
+    <VBtn
+      value="exclude"
+      size="small"
+      prependIcon="mdi-cancel"
+    >
+      Исключ.
+    </VBtn>
+  </VBtnToggle>
 
-  <Transition name="fade-section">
-    <div v-if="store.showOffsets">
-      <p class="text-caption text-disabled mb-2">
-        Тяни точку внутри ячейки, чтобы сдвинуть центр спрайта
-      </p>
-      <VBtn
-        size="small"
-        variant="tonal"
-        block
-        prependIcon="mdi-restore"
-        @click="store.resetCellOffsets()"
-      >
-        Сбросить смещения
-      </VBtn>
-    </div>
-  </Transition>
+  <p class="text-caption text-disabled mb-2">{{ modeHints[store.mode] }}</p>
 
-  <VDivider class="my-4" />
-
-  <p class="text-overline text-medium-emphasis mb-1">Исключение ячеек</p>
-  <VCheckbox
-    v-model="store.excludeMode"
-    density="compact"
-    hideDetails
+  <VBtn
+    v-if="store.mode === 'offset'"
+    size="small"
+    variant="tonal"
+    block
+    prependIcon="mdi-restore"
+    @click="store.resetCellOffsets()"
+  >
+    Сбросить смещения
+  </VBtn>
+  <VBtn
+    v-if="store.mode === 'exclude' && store.excludedCells.size > 0"
+    size="small"
+    variant="tonal"
     color="error"
-    class="ml-n1 mb-2"
+    block
+    prependIcon="mdi-restore"
+    @click="store.resetExcludedCells()"
   >
-    <template #label>
-      <span class="text-body-2 ml-2">Режим исключения</span>
-    </template>
-  </VCheckbox>
-
-  <Transition name="fade-section">
-    <div v-if="store.excludeMode">
-      <p class="text-caption text-disabled mb-2">
-        Клик/протяни по ячейкам, чтобы исключить их из экспорта
-      </p>
-      <VBtn
-        v-if="store.excludedCells.size > 0"
-        size="small"
-        variant="tonal"
-        color="error"
-        block
-        prependIcon="mdi-restore"
-        @click="store.resetExcludedCells()"
-      >
-        Сбросить исключения ({{ store.excludedCells.size }})
-      </VBtn>
-    </div>
-  </Transition>
+    Сбросить исключения ({{ store.excludedCells.size }})
+  </VBtn>
 </template>
 
 <style scoped>
-  .fade-section-enter-active,
-  .fade-section-leave-active {
-    transition: opacity 0.15s ease;
+  .mode-toggle {
+    width: 100%;
   }
-  .fade-section-enter-from,
-  .fade-section-leave-to {
-    opacity: 0;
+  .mode-toggle :deep(.v-btn) {
+    flex: 1;
+    text-transform: none;
+    font-size: 11px;
   }
 </style>

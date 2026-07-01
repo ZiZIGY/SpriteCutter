@@ -1,12 +1,16 @@
 import { watch, nextTick, type Ref } from 'vue';
 import { useResizeObserver, useRafFn } from '@vueuse/core';
 import { hexToRgba } from '@/utils/color';
-import type { SpriteCell, CellOffset } from '@/stores/spriteStore';
+import type {
+  SpriteCell,
+  CellOffset,
+  CanvasMode,
+} from '@/stores/spriteStore';
 
 interface RendererStore {
   imageSrc: string;
   gridColor: string;
-  showOffsets: boolean;
+  mode: CanvasMode;
   showNames: boolean;
   focusedCell: string | null;
   activeCells: SpriteCell[];
@@ -172,7 +176,7 @@ export function useCanvasRenderer(
       }
     }
 
-    if (store.showOffsets) {
+    if (store.mode === 'offset') {
       for (const cell of store.activeCells) {
         if (cell.excluded) continue;
         const offset = store.getCellOffset(cell.col, cell.row);
