@@ -65,8 +65,10 @@ export function useExport() {
   const cellsToExport = computed<PackedCell[]>(() => {
     const cells = exportAll.value
       ? store.activeCells.filter((c) => !c.excluded)
-      : store.activeCells.filter((cell) => store.selectedCells.has(`${cell.col}_${cell.row}`))
-    return packCells(cells)
+      : store.activeCells.filter((cell) =>
+          store.selectedCells.has(`${cell.col}_${cell.row}`)
+        );
+    return packCells(cells);
   });
 
   const exportCount = computed(() => cellsToExport.value.length);
@@ -101,10 +103,18 @@ export function useExport() {
     const animations: Record<string, string[]> = {};
     let start = 0;
     for (let i = 1; i <= keys.length; i++) {
-      if (i === keys.length || animBaseName(keys[i]) !== animBaseName(keys[start])) {
+      if (
+        i === keys.length ||
+        animBaseName(keys[i]) !== animBaseName(keys[start])
+      ) {
         if (i - start >= 2) {
           const name = animBaseName(keys[start]);
-          frameTags.push({ name, from: start, to: i - 1, direction: 'forward' });
+          frameTags.push({
+            name,
+            from: start,
+            to: i - 1,
+            direction: 'forward',
+          });
           animations[name] = (animations[name] ?? []).concat(
             keys.slice(start, i)
           );
