@@ -33,6 +33,27 @@ export function useCanvasCamera(
     zoom.value = newZoom;
   }
 
+  /** Pans (never zooms) so the rect is on screen; no-op when already visible. */
+  function reveal(r: { x: number; y: number; w: number; h: number }) {
+    const viewport = viewportRef.value;
+    if (!viewport) return;
+    const sx = panX.value + r.x * zoom.value;
+    const sy = panY.value + r.y * zoom.value;
+    const sw = r.w * zoom.value;
+    const sh = r.h * zoom.value;
+    const margin = 24;
+    if (
+      sx >= margin &&
+      sy >= margin &&
+      sx + sw <= viewport.clientWidth - margin &&
+      sy + sh <= viewport.clientHeight - margin
+    ) {
+      return;
+    }
+    panX.value = viewport.clientWidth / 2 - (r.x + r.w / 2) * zoom.value;
+    panY.value = viewport.clientHeight / 2 - (r.y + r.h / 2) * zoom.value;
+  }
+
   function onWheel(e: WheelEvent) {
     const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
     const rect = canvasRef.value!.getBoundingClientRect();
@@ -44,5 +65,5 @@ export function useCanvasCamera(
     zoom.value = newZoom;
   }
 
-  return { zoom, panX, panY, fitToScreen, adjustZoom, onWheel };
+  return { zoom, panX, panY, fitToScreen, adjustZoom, reveal, onWheel };
 }

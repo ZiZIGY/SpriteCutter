@@ -15,7 +15,8 @@ export function downloadBlob(blob: Blob, filename: string): void {
   a.href = URL.createObjectURL(blob)
   a.download = filename
   a.click()
-  URL.revokeObjectURL(a.href)
+  // Revoking in the same tick can cancel a large download before it starts.
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000)
 }
 
 export function canvasToBlob(canvas: HTMLCanvasElement, format: 'png' | 'webp'): Promise<Blob> {

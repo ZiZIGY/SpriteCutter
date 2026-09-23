@@ -1,203 +1,173 @@
-import {
-  canvasToBlob,
-  downloadBlob,
-  downloadCanvas,
-  downloadJSON,
-} from '@/utils/download';
 import { computed, ref } from 'vue';
-
 import JSZip from 'jszip';
-import type { SpriteCell } from '@/stores/spriteStore';
-import { useSpriteStore } from '@/stores/spriteStore';
 
-interface PackedCell {
-  cell: SpriteCell;
-  outCol: number;
-  outRow: number;
+import { useSpriteStore, type Sprite } from '@/stores/spriteStore';
+import { canvasToBlob, downloadBlob } from '@/utils/download';
+import { paintFrame } from '@/utils/render/frames';
+import {
+  planSheet,
+  sheetGeometry,
+  type SheetGeometry,
+  type SheetPlan,
+} from '@/utils/render/sheet';
+
+interface FrameTag {
+  name: string;
+  from: number;
+  to: number;
+  direction: string;
+}
+
+interface Sheet {
+  plan: SheetPlan;
+  geo: SheetGeometry;
+  /** Sheet cells holding a sprite, in export order. */
+  placed: { sprite: Sprite; x: number; y: number }[];
+}
+
+function sanitize(name: string): string {
+  return name
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ');
+}
+
+// "walk_1", "walk_2" → "walk"
+function animBaseName(frameName: string): string {
+  return frameName.replace(/[ _-]*\d+$/, '') || frameName;
 }
 
 export function useExport() {
   const store = useSpriteStore();
-  const loading = ref<'single' | 'sheet' | 'full' | 'json' | 'jsonAll' | null>(
-    null
+  const busy = ref<'bundle' | 'files' | 'sheet' | 'atlas' | null>(null);
+  const onlySelected = ref(false);
+
+  /** Sprites that go out: skipped ones never do. */
+  const list = computed(() =>
+    onlySelected.value && store.selected.size
+      ? store.exported.filter((s) => store.selected.has(s.id))
+      : store.exported
   );
-  const exportAll = ref(false);
 
-  const availableCount = computed(
-    () => store.activeCells.filter((c) => !c.excluded).length
+  const baseName = computed(
+    () => sanitize(store.imageName.replace(/\.[^.]+$/, '')) || 'sprites'
   );
 
-  function packCells(cells: SpriteCell[]): PackedCell[] {
-    const cols = Math.max(
-      1,
-      Math.max(...store.activeCells.map((c) => c.col)) + 1
-    );
-    return cells
-      .slice()
-      .sort((a, b) => a.row - b.row || a.col - b.col)
-      .map((cell, i) => ({
-        cell,
-        outCol: i % cols,
-        outRow: Math.floor(i / cols),
-      }));
-  }
-
-  function sanitizeName(name: string): string {
-    return name.replace(/[\\/:*?"<>|]+/g, '_').trim();
-  }
-
-  function resolveNames(packed: PackedCell[]): Map<PackedCell, string> {
+  /** Sprite names as file names: sanitized, defaulted, unique ignoring case. */
+  function fileNames(sprites: Sprite[]): Map<number, string> {
     const used = new Set<string>();
-    const names = new Map<PackedCell, string>();
-    for (const p of packed) {
-      const base = p.cell.name
-        ? sanitizeName(p.cell.name)
-        : `sprite_${String(p.outRow).padStart(2, '0')}_${String(p.outCol).padStart(2, '0')}`;
+    const out = new Map<number, string>();
+    for (const s of sprites) {
+      const index = store.sprites.indexOf(s);
+      const base =
+        sanitize(s.name) || `sprite_${String(index + 1).padStart(2, '0')}`;
       let name = base;
-      let suffix = 2;
-      while (used.has(name)) name = `${base}_${suffix++}`;
-      used.add(name);
-      names.set(p, name);
+      let k = 2;
+      while (used.has(name.toLowerCase())) name = `${base}_${k++}`;
+      used.add(name.toLowerCase());
+      out.set(s.id, name);
     }
-    return names;
+    return out;
   }
 
-  const cellsToExport = computed<PackedCell[]>(() => {
-    const cells = exportAll.value
-      ? store.activeCells.filter((c) => !c.excluded)
-      : store.activeCells.filter((cell) =>
-          store.selectedCells.has(`${cell.col}_${cell.row}`)
-        );
-    return packCells(cells);
-  });
-
-  const exportCount = computed(() => cellsToExport.value.length);
-
-  async function loadImg(): Promise<HTMLImageElement> {
-    const img = new Image();
-    await new Promise<void>((resolve) => {
-      img.onload = () => resolve();
-      img.src = store.imageSrc;
-    });
-    return img;
+  function frameCanvas(s: Sprite): HTMLCanvasElement {
+    const f = store.frames!;
+    const canvas = document.createElement('canvas');
+    canvas.width = f.width;
+    canvas.height = f.height;
+    const item = f.byId.get(s.id);
+    if (item) paintFrame(canvas.getContext('2d')!, f, item);
+    return canvas;
   }
 
-  interface FrameTag {
-    name: string;
-    from: number;
-    to: number;
-    direction: string;
+  function buildSheet(sprites: Sprite[]): Sheet {
+    const f = store.frames!;
+    const o = store.exportOptions;
+    const plan = planSheet(sprites, o.layout, o.columns);
+    const geo = sheetGeometry(plan, f.width, f.height, o.gap);
+    const byId = new Map(sprites.map((s) => [s.id, s]));
+    const placed = plan.cells
+      .filter((c) => c.id !== null)
+      .map((c) => ({ sprite: byId.get(c.id!)!, ...geo.at(c) }));
+    return { plan, geo, placed };
   }
 
-  // Animation name = frame name without its trailing index:
-  // "walk_1", "walk_2" → "walk"; default "sprite_00_01" → row group "sprite_00".
-  function animBaseName(frameName: string): string {
-    const base = frameName.replace(/[ _-]*\d+$/, '');
-    return base || frameName;
+  function sheetCanvas(sheet: Sheet) {
+    const f = store.frames!;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, sheet.geo.width);
+    canvas.height = Math.max(1, sheet.geo.height);
+    const ctx = canvas.getContext('2d')!;
+    for (const p of sheet.placed) {
+      const item = f.byId.get(p.sprite.id);
+      if (item) paintFrame(ctx, f, item, p.x, p.y);
+    }
+    return canvas;
   }
 
-  // Fallback when no animations are defined in the app: consecutive frames
-  // sharing a base name become one animation.
-  function groupByName(keys: string[]) {
-    const frameTags: FrameTag[] = [];
+  /** TexturePacker "JSON Hash" — read by Phaser, PixiJS, Unity importers. */
+  function buildAtlas(sheet: Sheet, names: Map<number, string>) {
+    const f = store.frames!;
+    const anchorBottom = store.output.anchor === 'bottom';
+    const order = sheet.placed.map((p) => p.sprite);
+    const indexById = new Map(order.map((s, i) => [s.id, i]));
+    const ordered = order.map((s) => names.get(s.id)!);
+
+    // Animations defined in the app win; otherwise consecutive frames that
+    // share a base name ("walk_1", "walk_2") become one.
+    const durations = new Map<string, number>();
     const animations: Record<string, string[]> = {};
-    let start = 0;
-    for (let i = 1; i <= keys.length; i++) {
-      if (
-        i === keys.length ||
-        animBaseName(keys[i]) !== animBaseName(keys[start])
-      ) {
+    const frameTags: FrameTag[] = [];
+    if (store.animations.length) {
+      for (const anim of store.animations) {
+        const ids = anim.frames.filter((id) => indexById.has(id));
+        if (!ids.length) continue;
+        const frameNames = ids.map((id) => names.get(id)!);
+        animations[anim.name] = frameNames;
+        const idx = ids.map((id) => indexById.get(id)!);
+        frameTags.push({
+          name: anim.name,
+          from: Math.min(...idx),
+          to: Math.max(...idx),
+          direction: 'forward',
+        });
+        const ms = Math.round(1000 / Math.max(1, anim.fps));
+        for (const n of frameNames) durations.set(n, ms);
+      }
+    } else {
+      let start = 0;
+      for (let i = 1; i <= ordered.length; i++) {
+        if (i < ordered.length && animBaseName(ordered[i]) === animBaseName(ordered[start])) continue;
         if (i - start >= 2) {
-          const name = animBaseName(keys[start]);
-          frameTags.push({
-            name,
-            from: start,
-            to: i - 1,
-            direction: 'forward',
-          });
-          animations[name] = (animations[name] ?? []).concat(
-            keys.slice(start, i)
-          );
+          const name = animBaseName(ordered[start]);
+          animations[name] = (animations[name] ?? []).concat(ordered.slice(start, i));
+          frameTags.push({ name, from: start, to: i - 1, direction: 'forward' });
         }
         start = i;
       }
     }
-    return { frameTags, animations };
-  }
-
-  function buildAtlas(packed: PackedCell[]) {
-    const imageName = store.imageFile?.name ?? 'spritesheet.png';
-    const gap = store.exportGap;
-    const maxOutCol = Math.max(...packed.map((p) => p.outCol));
-    const maxOutRow = Math.max(...packed.map((p) => p.outRow));
-    const cellW = Math.max(...packed.map((p) => p.cell.width));
-    const cellH = Math.max(...packed.map((p) => p.cell.height));
-
-    const names = resolveNames(packed);
-
-    // Animations defined in the app take priority; frame durations come from
-    // each animation's fps. Without them, fall back to name-based grouping.
-    const frameDurations = new Map<string, number>();
-    let frameTags: FrameTag[];
-    let animations: Record<string, string[]>;
-    if (store.animations.length) {
-      const keyToName = new Map<string, string>();
-      const keyToIndex = new Map<string, number>();
-      packed.forEach((p, i) => {
-        const key = `${p.cell.col}_${p.cell.row}`;
-        keyToName.set(key, names.get(p)!);
-        keyToIndex.set(key, i);
-      });
-
-      frameTags = [];
-      animations = {};
-      for (const anim of store.animations) {
-        const present = anim.frames.filter((key) => keyToName.has(key));
-        if (!present.length) continue;
-        const frameNames = present.map((key) => keyToName.get(key)!);
-        animations[anim.name] = frameNames;
-        const indices = present.map((key) => keyToIndex.get(key)!);
-        frameTags.push({
-          name: anim.name,
-          from: Math.min(...indices),
-          to: Math.max(...indices),
-          direction: 'forward',
-        });
-        const duration = Math.round(1000 / Math.max(1, anim.fps));
-        frameNames.forEach((n) => frameDurations.set(n, duration));
-      }
-    } else {
-      ({ frameTags, animations } = groupByName(
-        packed.map((p) => names.get(p)!)
-      ));
-    }
 
     const frames: Record<string, object> = {};
-    for (const p of packed) {
-      const { cell, outCol, outRow } = p;
-      const offset = store.getCellOffset(cell.col, cell.row);
-      const key = names.get(p)!;
-      frames[key] = {
-        frame: {
-          x: outCol * (cellW + gap),
-          y: outRow * (cellH + gap),
-          w: cell.width,
-          h: cell.height,
-        },
-        sourceFrame: {
-          x: cell.x + offset.x,
-          y: cell.y + offset.y,
-          w: cell.width,
-          h: cell.height,
-        },
+    for (const p of sheet.placed) {
+      const name = names.get(p.sprite.id)!;
+      const item = f.byId.get(p.sprite.id);
+      const place = item?.place;
+      frames[name] = {
+        frame: { x: p.x, y: p.y, w: f.width, h: f.height },
         rotated: false,
         trimmed: false,
-        spriteSourceSize: { x: 0, y: 0, w: cell.width, h: cell.height },
-        sourceSize: { w: cell.width, h: cell.height },
-        pivot: { x: -offset.x / cell.width, y: -offset.y / cell.height },
-        duration: frameDurations.get(key) ?? 100,
-        col: outCol,
-        row: outRow,
+        spriteSourceSize: { x: 0, y: 0, w: f.width, h: f.height },
+        sourceSize: { w: f.width, h: f.height },
+        pivot: {
+          x: 0.5,
+          y: anchorBottom && place ? (place.dy + place.dh) / f.height : 0.5,
+        },
+        duration: durations.get(name) ?? 100,
+        // Where the sprite was cut from in the original image.
+        source: item
+          ? { x: item.ext.x, y: item.ext.y, w: item.ext.w, h: item.ext.h }
+          : null,
+        row: p.sprite.row,
       };
     }
 
@@ -206,178 +176,95 @@ export function useExport() {
       animations,
       meta: {
         app: 'SpriteCutter',
-        image: imageName,
-        sourceImage: { w: store.imageWidth, h: store.imageHeight },
-        size: {
-          w: (maxOutCol + 1) * cellW + maxOutCol * gap,
-          h: (maxOutRow + 1) * cellH + maxOutRow * gap,
-        },
+        image: `${baseName.value}.${store.exportOptions.format}`,
+        format: 'RGBA8888',
+        size: { w: sheet.geo.width, h: sheet.geo.height },
         scale: 1,
-        format: store.exportFormat.toUpperCase(),
-        grid: { cellWidth: cellW, cellHeight: cellH, gap },
+        frameSize: { w: f.width, h: f.height },
+        sourceImage: {
+          name: store.imageName,
+          w: store.imageWidth,
+          h: store.imageHeight,
+        },
         frameTags,
       },
     };
   }
 
-  async function exportSingle() {
-    loading.value = 'single';
-    const packed = cellsToExport.value;
-    if (!packed.length) {
-      loading.value = null;
-      return;
+  async function run(kind: NonNullable<typeof busy.value>, job: () => Promise<void>) {
+    if (!list.value.length || !store.frames || busy.value) return;
+    busy.value = kind;
+    try {
+      await job();
+    } finally {
+      busy.value = null;
     }
-
-    const img = await loadImg();
-    const names = resolveNames(packed);
-    const zip = new JSZip();
-    for (const p of packed) {
-      const { cell } = p;
-      const offset = store.getCellOffset(cell.col, cell.row);
-      const canvas = document.createElement('canvas');
-      canvas.width = cell.width;
-      canvas.height = cell.height;
-      canvas
-        .getContext('2d')!
-        .drawImage(
-          img,
-          cell.x + offset.x,
-          cell.y + offset.y,
-          cell.width,
-          cell.height,
-          0,
-          0,
-          cell.width,
-          cell.height
-        );
-      const blob = await canvasToBlob(canvas, store.exportFormat);
-      zip.file(`${names.get(p)}.${store.exportFormat}`, blob);
-    }
-
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    const baseName = (store.imageFile?.name ?? 'spritesheet').replace(
-      /\.[^.]+$/,
-      ''
-    );
-    downloadBlob(zipBlob, `${baseName}_sprites.zip`);
-    loading.value = null;
   }
 
-  async function exportSheet() {
-    loading.value = 'sheet';
-    const packed = cellsToExport.value;
-    if (!packed.length) {
-      loading.value = null;
-      return;
+  async function addFrames(zip: JSZip, folder: string) {
+    const fmt = store.exportOptions.format;
+    const names = fileNames(list.value);
+    for (const s of list.value) {
+      zip.file(`${folder}${names.get(s.id)}.${fmt}`, await canvasToBlob(frameCanvas(s), fmt));
     }
+  }
 
-    const gap = store.exportGap;
-    const img = await loadImg();
-    const maxOutCol = Math.max(...packed.map((p) => p.outCol));
-    const maxOutRow = Math.max(...packed.map((p) => p.outRow));
-    const cellWidth = Math.max(...packed.map((p) => p.cell.width));
-    const cellHeight = Math.max(...packed.map((p) => p.cell.height));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = (maxOutCol + 1) * cellWidth + maxOutCol * gap;
-    canvas.height = (maxOutRow + 1) * cellHeight + maxOutRow * gap;
-
-    const ctx = canvas.getContext('2d')!;
-    for (const { cell, outCol, outRow } of packed) {
-      const offset = store.getCellOffset(cell.col, cell.row);
-      ctx.drawImage(
-        img,
-        cell.x + offset.x,
-        cell.y + offset.y,
-        cell.width,
-        cell.height,
-        outCol * (cellWidth + gap),
-        outRow * (cellHeight + gap),
-        cell.width,
-        cell.height
+  /** Sprites, sheet and atlas in one archive. */
+  const exportBundle = () =>
+    run('bundle', async () => {
+      const zip = new JSZip();
+      const fmt = store.exportOptions.format;
+      await addFrames(zip, 'sprites/');
+      const sheet = buildSheet(list.value);
+      zip.file(`${baseName.value}.${fmt}`, await canvasToBlob(sheetCanvas(sheet), fmt));
+      zip.file(
+        `${baseName.value}.json`,
+        JSON.stringify(buildAtlas(sheet, fileNames(list.value)), null, 2)
       );
-    }
-    downloadCanvas(canvas, 'spritesheet', store.exportFormat);
-    loading.value = null;
-  }
+      downloadBlob(await zip.generateAsync({ type: 'blob' }), `${baseName.value}.zip`);
+    });
 
-  async function exportFullSheet() {
-    loading.value = 'full';
-    const packed = packCells(store.activeCells.filter((c) => !c.excluded));
-    if (!packed.length) {
-      loading.value = null;
-      return;
-    }
-
-    const gap = store.exportGap;
-    const img = await loadImg();
-    const maxOutCol = Math.max(...packed.map((p) => p.outCol));
-    const maxOutRow = Math.max(...packed.map((p) => p.outRow));
-    const cellWidth = Math.max(...packed.map((p) => p.cell.width));
-    const cellHeight = Math.max(...packed.map((p) => p.cell.height));
-
-    const canvas = document.createElement('canvas');
-    canvas.width = (maxOutCol + 1) * cellWidth + maxOutCol * gap;
-    canvas.height = (maxOutRow + 1) * cellHeight + maxOutRow * gap;
-
-    const ctx = canvas.getContext('2d')!;
-    for (const { cell, outCol, outRow } of packed) {
-      const offset = store.getCellOffset(cell.col, cell.row);
-      ctx.drawImage(
-        img,
-        cell.x + offset.x,
-        cell.y + offset.y,
-        cell.width,
-        cell.height,
-        outCol * (cellWidth + gap),
-        outRow * (cellHeight + gap),
-        cell.width,
-        cell.height
+  const exportFiles = () =>
+    run('files', async () => {
+      const zip = new JSZip();
+      await addFrames(zip, '');
+      downloadBlob(
+        await zip.generateAsync({ type: 'blob' }),
+        `${baseName.value}_sprites.zip`
       );
-    }
-    downloadCanvas(canvas, 'spritesheet_full', store.exportFormat);
-    loading.value = null;
-  }
+    });
 
-  function exportJSON() {
-    loading.value = 'json';
-    const packed = cellsToExport.value;
-    if (!packed.length) {
-      loading.value = null;
-      return;
-    }
-    const baseName = (store.imageFile?.name ?? 'spritesheet').replace(
-      /\.[^.]+$/,
-      ''
-    );
-    downloadJSON(buildAtlas(packed), `${baseName}_atlas`);
-    loading.value = null;
-  }
+  const exportSheet = () =>
+    run('sheet', async () => {
+      const fmt = store.exportOptions.format;
+      const canvas = sheetCanvas(buildSheet(list.value));
+      downloadBlob(await canvasToBlob(canvas, fmt), `${baseName.value}.${fmt}`);
+    });
 
-  function exportJSONAll() {
-    loading.value = 'jsonAll';
-    const packed = packCells(store.activeCells.filter((c) => !c.excluded));
-    if (!packed.length) {
-      loading.value = null;
-      return;
-    }
-    const baseName = (store.imageFile?.name ?? 'spritesheet').replace(
-      /\.[^.]+$/,
-      ''
-    );
-    downloadJSON(buildAtlas(packed), `${baseName}_atlas_full`);
-    loading.value = null;
-  }
+  const exportAtlas = () =>
+    run('atlas', async () => {
+      const atlas = buildAtlas(buildSheet(list.value), fileNames(list.value));
+      downloadBlob(
+        new Blob([JSON.stringify(atlas, null, 2)], { type: 'application/json' }),
+        `${baseName.value}.json`
+      );
+    });
+
+  const sheetSize = computed(() => {
+    const f = store.frames;
+    if (!list.value.length || !f) return null;
+    const o = store.exportOptions;
+    return sheetGeometry(planSheet(list.value, o.layout, o.columns), f.width, f.height, o.gap);
+  });
 
   return {
-    loading,
-    exportAll,
-    exportCount,
-    availableCount,
-    exportSingle,
+    busy,
+    onlySelected,
+    list,
+    sheetSize,
+    exportBundle,
+    exportFiles,
     exportSheet,
-    exportFullSheet,
-    exportJSON,
-    exportJSONAll,
+    exportAtlas,
   };
 }

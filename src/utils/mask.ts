@@ -72,7 +72,9 @@ export function erodeMask(
   return result;
 }
 
-// ── BFS connected components (8-connectivity) ─────────────────────────────────
+// ── connected components (8-connectivity) ─────────────────────────────────────
+// Typed-array stack: a 2K sheet has millions of content pixels, and a growing
+// JS array queue is several times slower at that size.
 
 export function findComponents(
   mask: Uint8Array,
@@ -81,18 +83,18 @@ export function findComponents(
 ): { labels: Int32Array; numLabels: number } {
   const n = width * height;
   const labels = new Int32Array(n).fill(-1);
+  const stack = new Int32Array(n);
   let numLabels = 0;
   const dx8 = [-1, 0, 1, -1, 1, -1, 0, 1];
   const dy8 = [-1, -1, -1, 0, 0, 1, 1, 1];
-  const queue: number[] = [];
 
   for (let start = 0; start < n; start++) {
     if (mask[start] === 0 || labels[start] >= 0) continue;
     labels[start] = numLabels;
-    queue.push(start);
-    let head = 0;
-    while (head < queue.length) {
-      const cur = queue[head++];
+    let sp = 0;
+    stack[sp++] = start;
+    while (sp) {
+      const cur = stack[--sp];
       const cy = (cur / width) | 0;
       const cx = cur - cy * width;
       for (let d = 0; d < 8; d++) {
@@ -102,10 +104,9 @@ export function findComponents(
         const ni = ny * width + nx;
         if (mask[ni] === 0 || labels[ni] >= 0) continue;
         labels[ni] = numLabels;
-        queue.push(ni);
+        stack[sp++] = ni;
       }
     }
-    queue.length = 0;
     numLabels++;
   }
   return { labels, numLabels };

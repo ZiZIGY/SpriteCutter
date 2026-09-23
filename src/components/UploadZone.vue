@@ -1,28 +1,22 @@
 <script setup lang="ts">
-  import { ref, useTemplateRef, watch } from 'vue';
+  import { useTemplateRef } from 'vue';
   import { useDropZone, useFileDialog } from '@vueuse/core';
-  import { useSpriteStore } from '@/stores/spriteStore';
+  import { useFileIntake } from '@/composables/useFileIntake';
 
-  const store = useSpriteStore();
-
+  const { takeFiles } = useFileIntake();
   const dropZoneRef = useTemplateRef<HTMLElement>('dropZoneRef');
 
-  const { isOverDropZone } = useDropZone(dropZoneRef, {
-    onDrop(files) {
-      const file = files?.[0];
-      if (file && file.type.startsWith('image/')) store.loadImage(file);
-    },
-    dataTypes: (types) => types.some((type) => type.startsWith('image/')),
-  });
+  // Only for the highlight: the drop itself is handled once, window-wide, in
+  // App.vue (events bubble, a second handler here would load twice).
+  const { isOverDropZone } = useDropZone(dropZoneRef);
 
-  const { open: openFileDialog, files } = useFileDialog({
+  const { open: openFileDialog, onChange } = useFileDialog({
     accept: 'image/*',
     multiple: false,
+    reset: true,
   });
-
-  watch(files, (fileList) => {
-    const file = fileList?.[0];
-    if (file) store.loadImage(file);
+  onChange((files) => {
+    if (files) takeFiles(files);
   });
 </script>
 
@@ -36,7 +30,7 @@
     @click="openFileDialog()"
   >
     <VCardText
-      class="d-flex flex-column align-center justify-center pa-16 text-center"
+      class="d-flex flex-column align-center justify-center pa-12 text-center"
     >
       <VIcon
         size="72"
@@ -45,30 +39,17 @@
       >
         mdi-image-plus
       </VIcon>
-      <p class="text-h6 mb-2">Перетащите спрайт-лист сюда</p>
-      <p class="text-body-2 text-medium-emphasis mb-5"
-        >или нажмите для выбора файла</p
-      >
+      <p class="text-title-large mb-2">Перетащите картинку со спрайтами</p>
+      <p class="text-body-medium text-medium-emphasis mb-5">
+        или нажмите для выбора файла · или вставьте из буфера — Ctrl+V
+      </p>
       <VChipGroup>
         <VChip
+          v-for="f in ['PNG', 'JPEG', 'WebP', 'GIF']"
+          :key="f"
           size="small"
           variant="outlined"
-          >PNG</VChip
-        >
-        <VChip
-          size="small"
-          variant="outlined"
-          >JPEG</VChip
-        >
-        <VChip
-          size="small"
-          variant="outlined"
-          >WebP</VChip
-        >
-        <VChip
-          size="small"
-          variant="outlined"
-          >GIF</VChip
+          >{{ f }}</VChip
         >
       </VChipGroup>
     </VCardText>

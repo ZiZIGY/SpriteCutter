@@ -1,48 +1,35 @@
 <script setup lang="ts">
-  import { onMounted, onUnmounted, ref, watch } from 'vue';
+  import { onMounted, onUnmounted, useTemplateRef } from 'vue';
   import { useSpriteStore } from '@/stores/spriteStore';
+  import { paintFrame } from '@/utils/render/frames';
 
-  const props = defineProps<{ frames: string[]; fps: number }>();
-
-  const SIZE = 56;
+  /** Plays the exported frames (cleaned and normalized), not raw sheet cells. */
+  const props = withDefaults(
+    defineProps<{ frames: number[]; fps: number; size?: number }>(),
+    { size: 72 }
+  );
 
   const store = useSpriteStore();
-  const canvasRef = ref<HTMLCanvasElement | null>(null);
+  const canvasRef = useTemplateRef<HTMLCanvasElement>('canvasRef');
 
-  let img: HTMLImageElement | null = null;
   let raf = 0;
   let last = 0;
   let idx = 0;
 
-  function cellByKey(key: string) {
-    return (
-      store.activeCells.find((c) => `${c.col}_${c.row}` === key) ?? null
-    );
-  }
-
   function draw() {
     const canvas = canvasRef.value;
-    if (!canvas || !img || !props.frames.length) return;
+    const f = store.frames;
+    if (!canvas || !f) return;
+    const dpr = window.devicePixelRatio || 1;
+    const px = Math.round(props.size * dpr);
+    if (canvas.width !== px) canvas.width = canvas.height = px;
     const ctx = canvas.getContext('2d')!;
-    ctx.clearRect(0, 0, SIZE, SIZE);
-    const cell = cellByKey(props.frames[idx % props.frames.length]);
-    if (!cell) return;
-    const offset = store.getCellOffset(cell.col, cell.row);
-    const scale = Math.min(SIZE / cell.width, SIZE / cell.height, 1);
-    const w = cell.width * scale;
-    const h = cell.height * scale;
-    ctx.imageSmoothingEnabled = scale >= 1;
-    ctx.drawImage(
-      img,
-      cell.x + offset.x,
-      cell.y + offset.y,
-      cell.width,
-      cell.height,
-      (SIZE - w) / 2,
-      (SIZE - h) / 2,
-      w,
-      h
-    );
+    ctx.clearRect(0, 0, px, px);
+    const ids = props.frames.filter((id) => f.byId.has(id));
+    if (!ids.length) return;
+    const item = f.byId.get(ids[idx % ids.length])!;
+    const k = Math.min(px / f.width, px / f.height);
+    paintFrame(ctx, f, item, (px - f.width * k) / 2, (px - f.height * k) / 2, k);
   }
 
   function tick(t: number) {
@@ -54,45 +41,26 @@
   }
 
   onMounted(() => {
-    img = new Image();
-    img.onload = () => {
-      draw();
-      raf = requestAnimationFrame(tick);
-    };
-    img.src = store.imageSrc;
+    draw();
+    raf = requestAnimationFrame(tick);
   });
-
   onUnmounted(() => cancelAnimationFrame(raf));
-
-  watch(
-    () => [props.frames, props.fps] as const,
-    () => {
-      idx = 0;
-      draw();
-    }
-  );
 </script>
 
 <template>
   <canvas
     ref="canvasRef"
-    :width="SIZE"
-    :height="SIZE"
     class="anim-preview"
+    :style="{ width: `${size}px`, height: `${size}px` }"
   />
 </template>
 
 <style scoped>
   .anim-preview {
-    width: 56px;
-    height: 56px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
     background:
-      repeating-conic-gradient(
-        rgba(255, 255, 255, 0.06) 0% 25%,
-        transparent 0% 50%
-      )
+      repeating-conic-gradient(rgba(128, 128, 128, 0.2) 0% 25%, transparent 0% 50%)
       0 0 / 12px 12px;
     flex-shrink: 0;
   }

@@ -1,12 +1,12 @@
 <script setup lang="ts">
-  import { computed, useTemplateRef } from 'vue';
+  import { computed, useTemplateRef, watch } from 'vue';
   import { useTheme } from 'vuetify';
-  import { onKeyStroke } from '@vueuse/core';
   import { useSpriteStore } from '@/stores/spriteStore';
   import { useCanvasCamera } from '@/composables/useCanvasCamera';
-  import { useCanvasPointer } from '@/composables/useCanvasPointer';
-  import { useCanvasRenderer } from '@/composables/useCanvasRenderer';
+  import { useEditorPointer } from '@/composables/useEditorPointer';
+  import { useEditorRenderer } from '@/composables/useEditorRenderer';
   import CanvasHud from './CanvasHud.vue';
+  import CanvasToolbar from './CanvasToolbar.vue';
 
   const store = useSpriteStore();
   const vuetifyTheme = useTheme();
@@ -17,7 +17,7 @@
   const viewportRef = useTemplateRef<HTMLDivElement>('viewportRef');
   const canvasRef = useTemplateRef<HTMLCanvasElement>('canvasRef');
 
-  const { zoom, panX, panY, fitToScreen, adjustZoom, onWheel } =
+  const { zoom, panX, panY, fitToScreen, adjustZoom, reveal, onWheel } =
     useCanvasCamera(
       viewportRef,
       canvasRef,
@@ -26,47 +26,56 @@
     );
 
   const {
-    draggingDot,
-    cursorClass,
+    gesture,
+    cursor,
     onPointerDown,
     onPointerMove,
     onPointerUp,
-  } = useCanvasPointer(viewportRef, canvasRef, zoom, panX, panY, store);
+    onPointerLeave,
+  } = useEditorPointer(viewportRef, canvasRef, zoom, panX, panY, fitToScreen);
 
-  useCanvasRenderer(
+  useEditorRenderer(
     viewportRef,
     canvasRef,
     zoom,
     panX,
     panY,
-    draggingDot,
-    store,
+    gesture,
     fitToScreen
   );
 
-  onKeyStroke('0', () => fitToScreen(), { target: viewportRef });
+  watch(
+    () => store.revealRequest,
+    (req) => {
+      const s = req && store.sprites.find((sp) => sp.id === req.id);
+      if (s) reveal(s);
+    }
+  );
 </script>
 
 <template>
   <div
     ref="viewportRef"
     class="viewport"
-    :style="{ background: canvasBg }"
-    :class="cursorClass"
+    :style="{ background: canvasBg, cursor }"
     tabindex="0"
     @wheel.prevent="onWheel"
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
+    @pointercancel="onPointerUp"
+    @pointerleave="onPointerLeave"
   >
     <canvas
       ref="canvasRef"
       class="size-full block"
     />
 
+    <CanvasToolbar />
+
     <Transition name="fade">
       <div
-        v-if="store.isApplying"
+        v-if="store.busy"
         class="canvas-overlay"
       >
         <VProgressCircular
@@ -75,7 +84,7 @@
           size="48"
           width="3"
         />
-        <p class="text-caption text-medium-emphasis mt-3">Применяем сетку…</p>
+        <p class="text-body-small mt-3 overlay-text">Ищем спрайты…</p>
       </div>
     </Transition>
 
@@ -96,18 +105,7 @@
     overflow: hidden;
     border-radius: 12px;
     outline: none;
-  }
-  .cursor-grab {
-    cursor: grab;
-  }
-  .cursor-grabbing {
-    cursor: grabbing;
-  }
-  .cursor-crosshair {
-    cursor: crosshair;
-  }
-  .cursor-move {
-    cursor: move;
+    touch-action: none;
   }
 
   .canvas-overlay {
@@ -117,10 +115,13 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    background: rgba(8, 8, 18, 0.72);
-    backdrop-filter: blur(4px);
+    background: rgba(8, 8, 18, 0.6);
+    backdrop-filter: blur(3px);
     z-index: 30;
     border-radius: 12px;
+  }
+  .overlay-text {
+    color: rgba(255, 255, 255, 0.8);
   }
   .fade-enter-active,
   .fade-leave-active {
