@@ -40,6 +40,17 @@ generators — into clean, uniformly sized, named sprites.
   segment of `A → B → C`, text before a bracket, bold text)
 - Preview with thumbnails, shift, and "pin this name to the selected sprite"
 
+**Animations**
+
+- Frames of an animation share one scale and one anchor and are lined up with
+  each other, so playback does not jitter: auto (shape matching), centre of
+  mass, bottom line (characters on the ground), or as drawn in the source
+  (keeps a jump or lunge); fine-tune a frame by dragging it over an onion skin
+- Player with stepping, loop / ping-pong / once, crosshair and backgrounds;
+  frame strip with drag-to-reorder; one-row strip download
+- "Row = animation" makes every source row an animation automatically; the
+  sheet can be laid out one row per animation, in frame order
+
 **Editing**
 
 - Click / Shift-click / marquee selection, move and resize boxes, draw new

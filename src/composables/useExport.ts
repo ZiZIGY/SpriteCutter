@@ -5,7 +5,6 @@ import { useSpriteStore, type Sprite } from '@/stores/spriteStore';
 import { canvasToBlob, downloadBlob } from '@/utils/download';
 import { paintFrame } from '@/utils/render/frames';
 import {
-  planSheet,
   sheetGeometry,
   type SheetGeometry,
   type SheetPlan,
@@ -83,7 +82,7 @@ export function useExport() {
   function buildSheet(sprites: Sprite[]): Sheet {
     const f = store.frames!;
     const o = store.exportOptions;
-    const plan = planSheet(sprites, o.layout, o.columns);
+    const plan = store.planFor(sprites);
     const geo = sheetGeometry(plan, f.width, f.height, o.gap);
     const byId = new Map(sprites.map((s) => [s.id, s]));
     const placed = plan.cells
@@ -129,7 +128,7 @@ export function useExport() {
           name: anim.name,
           from: Math.min(...idx),
           to: Math.max(...idx),
-          direction: 'forward',
+          direction: anim.loop === 'pingpong' ? 'pingpong' : 'forward',
         });
         const ms = Math.round(1000 / Math.max(1, anim.fps));
         for (const n of frameNames) durations.set(n, ms);
@@ -254,7 +253,7 @@ export function useExport() {
     const f = store.frames;
     if (!list.value.length || !f) return null;
     const o = store.exportOptions;
-    return sheetGeometry(planSheet(list.value, o.layout, o.columns), f.width, f.height, o.gap);
+    return sheetGeometry(store.planFor(list.value), f.width, f.height, o.gap);
   });
 
   return {

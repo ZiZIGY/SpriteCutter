@@ -23,6 +23,12 @@ export interface Extracted {
   y: number;
   w: number;
   h: number;
+  /** Alpha of the sprite's own pixels over the trimmed box (w*h); the
+   *  background stays 0 even when it is kept opaque in the canvas. */
+  mask: Uint8Array;
+  /** Alpha-weighted centre of mass, in source coordinates. */
+  cx: number;
+  cy: number;
 }
 
 export function extractSprite(
@@ -52,6 +58,7 @@ export function extractSprite(
   const soften = o.soften && o.removeBg && bgColors ? bgColors : null;
 
   const out = new Uint8ClampedArray(w * h * 4);
+  const mask = new Uint8Array(w * h);
   let tMinX = w;
   let tMinY = h;
   let tMaxX = -1;
@@ -89,6 +96,7 @@ export function extractSprite(
       if (soften && touchesBackground(content, i, W, H)) {
         unmix(out, d, nearestColor(soften, px[s], px[s + 1], px[s + 2]));
       }
+      mask[y * w + x] = out[d + 3];
     }
   }
 
@@ -102,7 +110,30 @@ export function extractSprite(
   canvas.width = tw;
   canvas.height = th;
   canvas.getContext('2d')!.putImageData(new ImageData(out, w, h), -tx, -ty);
-  return { canvas, x: x0 + tx, y: y0 + ty, w: tw, h: th };
+
+  const trimmedMask = new Uint8Array(tw * th);
+  let sum = 0;
+  let sx = 0;
+  let sy = 0;
+  for (let y = 0; y < th; y++) {
+    for (let x = 0; x < tw; x++) {
+      const a = mask[(ty + y) * w + tx + x];
+      trimmedMask[y * tw + x] = a;
+      sum += a;
+      sx += a * x;
+      sy += a * y;
+    }
+  }
+  return {
+    canvas,
+    x: x0 + tx,
+    y: y0 + ty,
+    w: tw,
+    h: th,
+    mask: trimmedMask,
+    cx: x0 + tx + (sum ? sx / sum : tw / 2),
+    cy: y0 + ty + (sum ? sy / sum : th / 2),
+  };
 }
 
 function touchesBackground(
@@ -172,6 +203,30 @@ export interface Placement {
   dy: number;
   dw: number;
   dh: number;
+  /** Output pixels per source pixel. */
+  k: number;
+}
+
+export interface Shift {
+  x: number;
+  y: number;
+}
+
+/**
+ * Sprites placed together: one scale and one anchor for all of them, each
+ * shifted (in source pixels) so they line up. An animation is a unit; a
+ * standalone sprite is a unit of one with no shift.
+ */
+export interface Unit {
+  members: number[];
+  shifts: Shift[];
+}
+
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface FrameLayout {
@@ -181,15 +236,36 @@ export interface FrameLayout {
 }
 
 /**
- * `include` marks the sizes that decide the frame (skipped sprites still get a
- * placement for their thumbnail, but do not size a sheet they are not on).
+ * `include` marks the sprites that decide the frame (skipped sprites still get
+ * a placement for their thumbnail, but do not size a sheet they are not on).
  */
 export function layoutFrames(
-  all: { w: number; h: number }[],
+  exts: Box[],
   o: FrameOptions,
+  units: Unit[],
   include?: boolean[]
 ): FrameLayout {
-  const sizes = include ? all.filter((_, i) => include[i]) : all;
+  // Each unit is laid out by the union of its aligned members: scaling and
+  // centring that union keeps every frame of an animation in step.
+  const unions = units.map((u) => {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    u.members.forEach((m, j) => {
+      const e = exts[m];
+      const sh = u.shifts[j];
+      x0 = Math.min(x0, e.x + sh.x);
+      y0 = Math.min(y0, e.y + sh.y);
+      x1 = Math.max(x1, e.x + sh.x + e.w);
+      y1 = Math.max(y1, e.y + sh.y + e.h);
+    });
+    return { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
+  });
+  const sizes = unions.filter(
+    (_, i) => !include || units[i].members.some((m) => include[m])
+  );
+
   const pad = Math.max(0, Math.round(o.padding));
   let fw: number;
   let fh: number;
@@ -201,36 +277,41 @@ export function layoutFrames(
     // typical (median) size wins, so one oversized sprite does not force every
     // other one to be blown up to its size.
     const pick = o.scale === 'fit' ? median : (v: number[]) => Math.max(...v);
-    const ws = sizes.map((s) => s.w);
-    const hs = sizes.map((s) => s.h);
-    const w = sizes.length ? pick(ws) : 1;
-    const h = sizes.length ? pick(hs) : 1;
+    const w = sizes.length ? pick(sizes.map((s) => s.w)) : 1;
+    const h = sizes.length ? pick(sizes.map((s) => s.h)) : 1;
     if (o.square) {
       const side = sizes.length ? pick(sizes.map((s) => Math.max(s.w, s.h))) : 1;
-      fw = fh = side + 2 * pad;
+      fw = fh = Math.ceil(side) + 2 * pad;
     } else {
-      fw = w + 2 * pad;
-      fh = h + 2 * pad;
+      fw = Math.ceil(w) + 2 * pad;
+      fh = Math.ceil(h) + 2 * pad;
     }
   }
 
   const iw = Math.max(1, fw - 2 * pad);
   const ih = Math.max(1, fh - 2 * pad);
-  const fitOf = (s: { w: number; h: number }) => Math.min(iw / s.w, ih / s.h);
+  const fitOf = (s: Box) => Math.min(iw / s.w, ih / s.h);
   let common = Infinity;
   for (const s of sizes) common = Math.min(common, fitOf(s));
   if (!isFinite(common)) common = 1;
 
-  const places = all.map((s) => {
-    const k = o.scale === 'fit' ? fitOf(s) : o.scale === 'uniform' ? common : 1;
-    const dw = Math.max(1, Math.round(s.w * k));
-    const dh = Math.max(1, Math.round(s.h * k));
-    return {
-      dx: Math.round((fw - dw) / 2),
-      dy: o.anchor === 'bottom' ? fh - pad - dh : Math.round((fh - dh) / 2),
-      dw,
-      dh,
-    };
+  const places: Placement[] = new Array(exts.length);
+  units.forEach((u, i) => {
+    const U = unions[i];
+    const k = o.scale === 'fit' ? fitOf(U) : o.scale === 'uniform' ? common : 1;
+    const ox = (fw - U.w * k) / 2;
+    const oy = o.anchor === 'bottom' ? fh - pad - U.h * k : (fh - U.h * k) / 2;
+    u.members.forEach((m, j) => {
+      const e = exts[m];
+      const sh = u.shifts[j];
+      places[m] = {
+        dx: Math.round(ox + (e.x + sh.x - U.x) * k),
+        dy: Math.round(oy + (e.y + sh.y - U.y) * k),
+        dw: Math.max(1, Math.round(e.w * k)),
+        dh: Math.max(1, Math.round(e.h * k)),
+        k,
+      };
+    });
   });
   return { width: fw, height: fh, places };
 }

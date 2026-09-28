@@ -135,6 +135,11 @@
           >
             <VBtn value="rows">Ряды как в исходнике</VBtn>
             <VBtn value="grid">Сетка</VBtn>
+            <VBtn
+              value="anims"
+              :disabled="!store.animations.length"
+              >По анимациям</VBtn
+            >
           </VBtnToggle>
         </div>
         <div class="two-col mt-2 mb-1">

@@ -1,7 +1,7 @@
 import { ref } from 'vue';
 import { defineStore } from 'pinia';
 
-export type DialogName = 'names' | 'animations' | 'export';
+export type DialogName = 'names' | 'export';
 
 export const useUiStore = defineStore('ui', () => {
   const dialog = ref<DialogName | null>(null);

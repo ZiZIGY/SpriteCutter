@@ -4,6 +4,7 @@
   import SpriteCanvas from '@/components/SpriteCanvas.vue';
   import SpriteList from '@/components/SpriteList.vue';
   import SheetPreview from '@/components/SheetPreview.vue';
+  import AnimationsView from '@/components/animations/AnimationsView.vue';
 
   const store = useSpriteStore();
 
@@ -77,11 +78,17 @@
           prependIcon="mdi-view-grid-outline"
           >Результат</VBtn
         >
+        <VBtn
+          value="animations"
+          prependIcon="mdi-filmstrip"
+          >Анимации</VBtn
+        >
       </VBtnToggle>
 
       <!-- v-show keeps the canvas camera (zoom, pan) across tab switches. -->
       <SpriteCanvas v-show="store.view === 'source'" />
       <SheetPreview v-if="store.view === 'result'" />
+      <AnimationsView v-if="store.view === 'animations'" />
       <p
         v-if="store.view === 'source'"
         class="hint"

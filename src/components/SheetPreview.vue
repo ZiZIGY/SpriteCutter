@@ -101,6 +101,12 @@
           prependIcon="mdi-grid"
           >Заполнить сеткой</VBtn
         >
+        <VBtn
+          value="anims"
+          prependIcon="mdi-filmstrip"
+          :disabled="!store.animations.length"
+          >По анимациям</VBtn
+        >
       </VBtnToggle>
       <VNumberInput
         v-if="store.exportOptions.layout === 'grid'"

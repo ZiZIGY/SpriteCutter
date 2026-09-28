@@ -25,8 +25,16 @@ import {
   type FrameOptions,
   type FrameSet,
   type Placement,
+  type Shift,
+  type Unit,
 } from '@/utils/render/frames';
-import { planSheet, type SheetLayout } from '@/utils/render/sheet';
+import { alignFrames, type AlignMode } from '@/utils/render/align';
+import {
+  planSheet,
+  type PlanItem,
+  type SheetLayout,
+  type SheetPlan,
+} from '@/utils/render/sheet';
 
 export interface Sprite extends SpriteBox {
   id: number;
@@ -44,11 +52,14 @@ export interface Sprite extends SpriteBox {
 export interface ExportOptions {
   format: 'png' | 'webp';
   gap: number;
-  layout: SheetLayout;
+  /** 'anims': one row per animation in its frame order, then the rest. */
+  layout: SheetLayout | 'anims';
   columns: number;
 }
 
-export type EditorView = 'source' | 'result';
+export type EditorView = 'source' | 'result' | 'animations';
+
+export type LoopMode = 'loop' | 'pingpong' | 'once';
 
 export interface SpriteAnimation {
   id: number;
@@ -56,6 +67,11 @@ export interface SpriteAnimation {
   /** Sprite ids in playback order. */
   frames: number[];
   fps: number;
+  loop: LoopMode;
+  /** How the frames are lined up with each other on the sheet. */
+  align: AlignMode;
+  /** Hand-tuned extra shift per sprite id, in source pixels. */
+  nudge: Record<number, Shift>;
 }
 
 export type DetectMethod = 'auto' | 'grid';
@@ -71,6 +87,13 @@ export interface OutputOptions extends FrameOptions {
 export interface FrameItem {
   ext: Extracted;
   place: Placement;
+}
+
+export interface AnimationPrefs {
+  /** Every source row with two or more sprites becomes an animation. */
+  autoRows: boolean;
+  /** Alignment for new animations. */
+  align: AlignMode;
 }
 
 export interface Frames extends FrameSet {
@@ -156,6 +179,11 @@ export const useSpriteStore = defineStore('sprite', () => {
   const exportOptions = useLocalStorage<ExportOptions>(
     'sprite-cutter-export',
     { format: 'png', gap: 2, layout: 'rows', columns: 8 },
+    { mergeDefaults: true }
+  );
+  const animPrefs = useLocalStorage<AnimationPrefs>(
+    'sprite-cutter-animations',
+    { autoRows: false, align: 'match' },
     { mergeDefaults: true }
   );
   /** Main area: the marked-up sheet, or the output as it will be exported. */
@@ -315,24 +343,43 @@ export const useSpriteStore = defineStore('sprite', () => {
     else if (history === 'clear') clearHistory();
     const prev = sprites.value;
     analysis.value = an;
+    // Each new box inherits from the old box it overlaps best: name, export
+    // flags, and its place in animations.
+    const renamed = new Map<number, number>();
     sprites.value = ordered(
       boxes.map((b) => {
         const s: Sprite = { ...b, id: idSeq++, name: '', row: 0 };
         let best = 0;
+        let from: number | null = null;
         for (const p of prev) {
-          if (!p.name && !p.skip && !p.gapBefore && !p.breakBefore) continue;
           const v = iou(p, s);
           if (v > best && v >= 0.5) {
             best = v;
+            from = p.id;
             s.name = p.name;
             s.skip = p.skip;
             s.gapBefore = p.gapBefore;
             s.breakBefore = p.breakBefore;
           }
         }
+        if (from !== null) renamed.set(from, s.id);
         return s;
       })
     );
+    for (const a of animations.value) {
+      const nudge: Record<number, Shift> = {};
+      for (const [old, shift] of Object.entries(a.nudge)) {
+        const id = renamed.get(Number(old));
+        if (id !== undefined) nudge[id] = shift;
+      }
+      a.frames = a.frames.flatMap((id) => {
+        const next = renamed.get(id);
+        return next === undefined ? [] : [next];
+      });
+      a.nudge = nudge;
+    }
+    animations.value = animations.value.filter((a) => a.frames.length);
+    if (animPrefs.value.autoRows && !animations.value.length) addAnimationsFromRows();
     selected.value = new Set();
   }
 
@@ -519,13 +566,39 @@ export const useSpriteStore = defineStore('sprite', () => {
   }
 
   const exported = computed(() => sprites.value.filter((s) => !s.skip));
-  const sheetPlan = computed(() =>
-    planSheet(
-      exported.value,
-      exportOptions.value.layout,
-      exportOptions.value.columns
-    )
-  );
+  /** Sheet plan for any subset of sprites, in the current layout. */
+  function planFor(list: Sprite[]): SheetPlan {
+    const o = exportOptions.value;
+    if (o.layout !== 'anims') return planSheet(list, o.layout, o.columns);
+    // Nothing to group by yet (a fresh sheet): fall back to the source rows.
+    if (!animations.value.length) return planSheet(list, 'rows', o.columns);
+    const allowed = new Set(list.map((s) => s.id));
+    const byIdMap = new Map(list.map((s) => [s.id, s]));
+    const used = new Set<number>();
+    const items: PlanItem[] = [];
+    const take = (s: Sprite, first: boolean) => {
+      used.add(s.id);
+      items.push({ ...s, breakBefore: first || s.breakBefore });
+    };
+    for (const a of animations.value) {
+      let first = true;
+      for (const id of a.frames) {
+        if (!allowed.has(id) || used.has(id)) continue;
+        take(byIdMap.get(id)!, first);
+        first = false;
+      }
+    }
+    // Sprites outside animations follow, keeping their source rows.
+    let prevRow: number | null = null;
+    for (const s of list) {
+      if (used.has(s.id)) continue;
+      take(s, s.row !== prevRow);
+      prevRow = s.row;
+    }
+    return planSheet(items, 'grid', Infinity);
+  }
+
+  const sheetPlan = computed(() => planFor(exported.value));
 
   // ── selection ──────────────────────────────────────────────────────────────
   function selectOnly(id: number) {
@@ -574,6 +647,9 @@ export const useSpriteStore = defineStore('sprite', () => {
       name: name ?? `anim_${animations.value.length + 1}`,
       frames,
       fps: 10,
+      loop: 'loop',
+      align: animPrefs.value.align,
+      nudge: {},
     };
     animations.value.push(anim);
     return anim;
@@ -585,17 +661,26 @@ export const useSpriteStore = defineStore('sprite', () => {
     );
   }
 
-  /** One animation per row: generated sheets usually put a cycle on a row. */
+  /** One animation per row: generated sheets usually put a cycle on a row.
+   *  Sprites already in an animation are left alone. */
   function addAnimationsFromRows() {
+    const used = new Set(animations.value.flatMap((a) => a.frames));
+    const made: SpriteAnimation[] = [];
     for (let r = 0; r < rowCount.value; r++) {
-      const row = sprites.value.filter((s) => s.row === r);
+      const row = sprites.value.filter((s) => s.row === r && !used.has(s.id));
       if (row.length < 2) continue;
       const base = commonPrefix(row.map((s) => s.name)).replace(/[\s_-]+$/, '');
-      addAnimation(
+      const anim = addAnimation(
         row.map((s) => s.id),
         base || `row_${r + 1}`
       );
+      if (anim) made.push(anim);
     }
+    return made;
+  }
+
+  function animById(id: number) {
+    return animations.value.find((a) => a.id === id);
   }
 
   function removeAnimation(id: number) {
@@ -603,8 +688,45 @@ export const useSpriteStore = defineStore('sprite', () => {
   }
 
   function selectAnimationFrames(id: number) {
-    const anim = animations.value.find((a) => a.id === id);
+    const anim = animById(id);
     if (anim) selected.value = new Set(anim.frames);
+  }
+
+  function moveFrame(id: number, from: number, to: number) {
+    const anim = animById(id);
+    if (!anim || from === to) return;
+    const [f] = anim.frames.splice(from, 1);
+    anim.frames.splice(to, 0, f);
+  }
+
+  function removeFrame(id: number, index: number) {
+    const anim = animById(id);
+    if (anim) anim.frames.splice(index, 1);
+  }
+
+  /** Appends the selected sprites in reading order, skipping ones already in. */
+  function addSelectedFrames(id: number) {
+    const anim = animById(id);
+    if (!anim) return;
+    for (const s of sprites.value) {
+      if (selected.value.has(s.id) && !anim.frames.includes(s.id)) {
+        anim.frames.push(s.id);
+      }
+    }
+  }
+
+  function nudgeFrame(id: number, spriteId: number, dx: number, dy: number) {
+    const anim = animById(id);
+    if (!anim) return;
+    const cur = anim.nudge[spriteId] ?? { x: 0, y: 0 };
+    anim.nudge[spriteId] = { x: cur.x + dx, y: cur.y + dy };
+  }
+
+  function resetNudge(id: number, spriteId?: number) {
+    const anim = animById(id);
+    if (!anim) return;
+    if (spriteId === undefined) anim.nudge = {};
+    else delete anim.nudge[spriteId];
   }
 
   // ── output frames ──────────────────────────────────────────────────────────
@@ -612,6 +734,53 @@ export const useSpriteStore = defineStore('sprite', () => {
   // changes touch one box or only the frame layout, so extracted sprites are
   // cached by everything they depend on.
   const extractCache = new Map<string, Extracted>();
+
+  // Registration is not free either; alignments are cached by the frames'
+  // extraction keys and the mode.
+  const alignCache = new Map<string, Shift[]>();
+
+  /**
+   * Animations become layout units (one scale, frames lined up); every other
+   * sprite is a unit of its own. A sprite in two animations follows the first.
+   */
+  function buildUnits(list: Extracted[], keyOf: string[]): Unit[] {
+    const index = new Map(sprites.value.map((s, i) => [s.id, i]));
+    const taken = new Set<number>();
+    const units: Unit[] = [];
+    for (const a of animations.value) {
+      if (a.align === 'none') continue;
+      const members: number[] = [];
+      for (const id of a.frames) {
+        const i = index.get(id);
+        if (i === undefined || taken.has(i)) continue;
+        taken.add(i);
+        members.push(i);
+      }
+      if (!members.length) continue;
+      const key = `${a.align}|${members.map((i) => keyOf[i]).join(';')}`;
+      let shifts = alignCache.get(key);
+      if (!shifts) {
+        if (alignCache.size > 200) alignCache.clear();
+        shifts = alignFrames(
+          members.map((i) => list[i]),
+          members.map((i) => sprites.value[i].row),
+          a.align
+        );
+        alignCache.set(key, shifts);
+      }
+      units.push({
+        members,
+        shifts: shifts.map((sh, j) => {
+          const n = a.nudge[sprites.value[members[j]].id];
+          return n ? { x: sh.x + n.x, y: sh.y + n.y } : sh;
+        }),
+      });
+    }
+    sprites.value.forEach((_, i) => {
+      if (!taken.has(i)) units.push({ members: [i], shifts: [{ x: 0, y: 0 }] });
+    });
+    return units;
+  }
 
   const frames = computed<Frames | null>(() => {
     const an = analysis.value;
@@ -624,8 +793,10 @@ export const useSpriteStore = defineStore('sprite', () => {
       trim: o.trim,
     };
     const flags = `${+o.removeBg}${+o.isolate}${+o.soften}${+o.trim}`;
-    const list = sprites.value.map((s) => {
+    const keyOf: string[] = [];
+    const list = sprites.value.map((s, i) => {
       const key = `${an.version}|${s.x},${s.y},${s.w},${s.h}|${s.owned ? s.owned.join(',') : '*'}|${flags}`;
+      keyOf[i] = key;
       let ext = extractCache.get(key);
       if (!ext) {
         if (extractCache.size > EXTRACT_CACHE_LIMIT) extractCache.clear();
@@ -635,7 +806,12 @@ export const useSpriteStore = defineStore('sprite', () => {
       return ext;
     });
     const kept = sprites.value.map((s) => !s.skip);
-    const layout = layoutFrames(list, o, kept.includes(true) ? kept : undefined);
+    const layout = layoutFrames(
+      list,
+      o,
+      buildUnits(list, keyOf),
+      kept.includes(true) ? kept : undefined
+    );
     const byIdMap = new Map<number, FrameItem>();
     sprites.value.forEach((s, i) =>
       byIdMap.set(s.id, { ext: list[i], place: layout.places[i] })
@@ -669,6 +845,7 @@ export const useSpriteStore = defineStore('sprite', () => {
     animations.value = [];
     view.value = 'source';
     extractCache.clear();
+    alignCache.clear();
     clearHistory();
   }
 
@@ -687,10 +864,12 @@ export const useSpriteStore = defineStore('sprite', () => {
     showMask,
     output,
     exportOptions,
+    animPrefs,
     view,
     sprites,
     exported,
     sheetPlan,
+    planFor,
     selected,
     hovered,
     revealRequest,
@@ -732,6 +911,11 @@ export const useSpriteStore = defineStore('sprite', () => {
     addAnimationsFromRows,
     removeAnimation,
     selectAnimationFrames,
+    moveFrame,
+    removeFrame,
+    addSelectedFrames,
+    nudgeFrame,
+    resetNudge,
     reset,
   };
 });

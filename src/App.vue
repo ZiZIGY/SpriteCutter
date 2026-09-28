@@ -13,7 +13,6 @@
   import DetectMenu from '@/components/popups/DetectMenu.vue';
   import FrameMenu from '@/components/popups/FrameMenu.vue';
   import NamesDialog from '@/components/popups/NamesDialog.vue';
-  import AnimationsDialog from '@/components/popups/AnimationsDialog.vue';
   import ExportDialog from '@/components/popups/ExportDialog.vue';
 
   const store = useSpriteStore();
@@ -107,7 +106,7 @@
           variant="text"
           prependIcon="mdi-filmstrip"
           class="bar-btn"
-          @click="ui.open('animations')"
+          @click="store.view = 'animations'"
         >
           Анимации
           <VBadge
@@ -164,7 +163,6 @@
     </VMain>
 
     <NamesDialog />
-    <AnimationsDialog />
     <ExportDialog />
 
     <Transition name="fade">

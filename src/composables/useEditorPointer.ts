@@ -278,6 +278,11 @@ export function useEditorPointer(
   useEventListener(window, 'keydown', (e: KeyboardEvent) => {
     if (isTyping(e) || ui.dialog || !store.imageSrc) return;
     const mod = e.ctrlKey || e.metaKey;
+    // The animation view has its own keys; deleting sprites from there would
+    // be a surprise. Undo still works everywhere.
+    if (store.view === 'animations' && !(mod && (e.code === 'KeyZ' || e.code === 'KeyY'))) {
+      return;
+    }
     if (e.code === 'Space') {
       spaceHeld.value = true;
       e.preventDefault();
